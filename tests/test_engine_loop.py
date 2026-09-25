@@ -896,7 +896,7 @@ def test_max_positions_enforced_across_scored_candidates() -> None:
 
         # 진입 판단(playbook)과 봉 조회는 이 테스트의 관심사가 아니다 - 후보 5개
         # 전부가 서로 다른 점수로 "매수" 신호를 내도록 고정해 둔다.
-        engine._entry_bars = lambda symbol, count: ([SimpleNamespace(volume=1000.0)], False)
+        engine._entry_bars = lambda symbol, count: ([SimpleNamespace(ts="2026-01-02T09:30:00", open=1000.0, high=1000.0, low=1000.0, close=1000.0, volume=1000.0)], False)
 
         def fake_evaluate(bars, ctx):
             idx = int(ctx.symbol[-1])
