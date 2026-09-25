@@ -14,6 +14,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from daytrader.bithumb_api import BithumbApiError
+from daytrader.orders import OrderIntent, OrderUncertainError, new_coid
+from daytrader.timeutil import iso, now_kst
+
 
 @dataclass
 class CryptoPosition:
@@ -214,14 +218,43 @@ class PaperBithumbBroker:
 
 # ━━ 실거래 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _resolve_uncertain_bithumb(client, intent: OrderIntent, order_book, tries: int = 5, gap: float = 2.0):
+    """★★★ [1-5] 타임아웃 뒤 재전송 대신 조회로 접수 여부를 확인한다
+    (daytrader/orders.py 의 resolve_uncertain() 과 같은 설계를 빗썸 API
+    모양에 맞춰 다시 짰다). 절대 재전송하지 않는다 - 재전송하면 이미
+    접수된 주문에 겹쳐 2배로 사고/판다.
+    ★ get_order() 는 예외를 던지지 않고 실패하면 None 을 준다 - 여기서도
+    방어적으로 다시 감싼다(모르는 응답 형태가 와도 안전한 쪽으로 넘어가게).
+    """
+    for _ in range(tries):
+        try:
+            row = client.get_order(client_order_id=intent.coid)
+        except Exception:
+            row = None
+        if isinstance(row, dict):
+            order_id = row.get("uuid") or row.get("order_id")
+            if order_id:
+                order_book.update(intent.coid, status="sent", order_id=order_id)
+                return order_id
+        time.sleep(gap)
+    order_book.update(intent.coid, status="unknown")
+    return None
+
+
 class LiveBithumbBroker:
     """★★★ 실제 주문을 낸다. 같은 안전장치(book 에 없으면 거부)가 여기도
     그대로 적용된다 - 실거래라고 완화하지 않는다.
     """
 
-    def __init__(self, client, book: CryptoPositionBook | None = None):
+    def __init__(self, client, book: CryptoPositionBook | None = None, order_book=None):
         self.client = client
         self.book = book or CryptoPositionBook()
+        # ★★★ [1-5] 국내주식(daytrader/orders.py)과 같은 설계 - order_book
+        # 없이는 이중 주문 방지 장치가 통째로 빠지므로, 실거래에서는 반드시
+        # 엔진이 넘겨줘야 한다(_send 가 강제한다).
+        self.order_book = order_book
+        self.halted = False
+        self.halt_reason = ""
 
     def cash(self) -> float:
         for a in self.client.accounts():
@@ -229,8 +262,51 @@ class LiveBithumbBroker:
                 return float(a.get("balance", 0))
         return 0.0
 
+    def _send(self, side: str, market: str, *, price: str | None = None, volume: str | None = None,
+              reason: str = "") -> dict:
+        """의도를 먼저 기록한 뒤 보낸다. place_order() 가 network_error(응답을
+        못 받은 경우)로 실패하면 재전송 대신 조회로 확인한다 - 확인도 안 되면
+        이 브로커를 halt 시키고 OrderUncertainError 를 던진다.
+        """
+        if self.order_book is None:
+            raise RuntimeError("LiveBithumbBroker 는 order_book 없이 실거래를 낼 수 없습니다.")
+        side_kr = "BUY" if side == "bid" else "SELL"
+        coid = new_coid(side_kr, market)
+        intent = OrderIntent(
+            coid=coid, at=iso(now_kst()), mode="live", symbol=market, name="",
+            side=side_kr, order_type="MARKET",
+            quantity=float(volume) if volume else 0.0, price=float(price) if price else 0.0,
+            reason=reason, verdict_id=None,
+        )
+        self.order_book.record(intent)
+        order_type = "price" if side == "bid" else "market"
+        try:
+            result = self.client.place_order(market, side, order_type, price=price, volume=volume,
+                                              client_order_id=coid)
+            order_id = result.get("uuid") if isinstance(result, dict) else None
+            self.order_book.update(coid, status="sent", order_id=order_id)
+            return result or {}
+        except BithumbApiError as exc:
+            if exc.code == "network_error":
+                # ★ _request() 가 응답을 아예 못 받았을 때만 이 코드를 준다 - 4xx/5xx
+                # 처럼 서버가 명확히 거부한 응답은 여기 안 걸린다(재전송 없이 그대로 실패 처리).
+                order_id = _resolve_uncertain_bithumb(self.client, intent, self.order_book)
+                if order_id is not None:
+                    return {"uuid": order_id}
+                # ★★★ 접수 여부를 끝내 확인하지 못했다 - 재전송하면 이중 주문,
+                # 그냥 넘어가면 포지션 기록 누락(다음 스캔에서 또 산다). 둘 다
+                # 위험하니 이 시장 전체를 멈추고 사람에게 알린다.
+                self.halted = True
+                self.halt_reason = (
+                    f"{market} {side_kr} 주문 접수 여부를 확인하지 못했습니다 - "
+                    "빗썸에서 직접 확인한 뒤 매매를 재개하세요."
+                )
+                raise OrderUncertainError(self.halt_reason) from exc
+            self.order_book.update(coid, status="unknown", error=str(exc))
+            raise
+
     def buy(self, market: str, krw_amount: float, ref_price: float, *, technique: str = ""):
-        result = self.client.place_order(market, "bid", "price", price=str(krw_amount))
+        result = self._send("bid", market, price=str(krw_amount), reason=technique)
         # ★ 시장가 매수 응답의 실제 체결가·수량은 별도 조회가 필요하다 - 여기서는
         # 주문 접수 시점의 근사치로 기록해두고, 실제 운용 시 체결 조회로 갱신해야 한다.
         quantity = krw_amount / ref_price if ref_price > 0 else 0.0
@@ -248,7 +324,7 @@ class LiveBithumbBroker:
         pos = self.book.get(market)
         if pos is None or not ref_price or ref_price <= 0 or not krw_amount or krw_amount <= 0:
             return None
-        self.client.place_order(market, "bid", "price", price=str(krw_amount))
+        self._send("bid", market, price=str(krw_amount), reason="add")
         _merge_buy(pos, krw_amount / ref_price, ref_price, krw_amount)
         return pos
 
@@ -263,7 +339,7 @@ class LiveBithumbBroker:
         held = float(pos.quantity or 0.0)
         qty = held if fraction >= 1.0 else held * max(0.0, min(1.0, fraction))
         partial = qty < held
-        result = self.client.place_order(market, "ask", "market", volume=str(qty))
+        result = self._send("ask", market, volume=str(qty), reason=reason)
         pnl = qty * ((ref_price or 0.0) - (pos.entry_price or 0.0))
         remaining = 0.0
         if partial:

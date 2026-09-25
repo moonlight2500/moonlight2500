@@ -239,3 +239,24 @@ class BithumbClient:
         if client_order_id:
             params["client_order_id"] = client_order_id
         return self._request("DELETE", "/v2/order", params=params)
+
+    def get_order(self, order_id: str | None = None, client_order_id: str | None = None) -> dict | None:
+        """★★ 개별 주문 조회 - 타임아웃 뒤 재전송 대신 접수 여부를 확인하는
+        용도다(place_order 가 network_error 로 실패했을 때). order_id 또는
+        client_order_id 중 하나 이상 필요(cancel_order 와 같은 규칙).
+        ★★★ place_order/cancel_order 와 달리 이 엔드포인트는 아직 실제 응답으로
+        연계 테스트를 해보지 못했다 - 실전 투입 전 반드시 먼저 확인해야 한다.
+        조회 자체가 실패해도 예외를 던지지 않고 None 을 돌려준다 - 호출부(브로커)가
+        "확인 못 함"으로 보고 안전한 쪽(매매 중단)으로 넘어갈 수 있어야 한다.
+        """
+        if not order_id and not client_order_id:
+            raise ValueError("order_id 또는 client_order_id 중 하나는 있어야 합니다.")
+        params = {}
+        if order_id:
+            params["uuid"] = order_id
+        if client_order_id:
+            params["client_order_id"] = client_order_id
+        try:
+            return self._request("GET", "/v1/order", params=params)
+        except BithumbApiError:
+            return None

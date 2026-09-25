@@ -15,7 +15,10 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from daytrader.orders import OrderIntent, OrderUncertainError, new_coid, resolve_uncertain
 from daytrader.sizing import split_quantity
+from daytrader.timeutil import iso, now_kst
+from daytrader.tossapi import TossApiError
 
 # ★★★ "ETF는 수수료 이외에 운용비도 감안해야 한다" 요청(2026-09-24) - 개별 주식과 달리 ETF는
 # 보유 기간 내내 매일 조금씩 떼가는 연간 운용보수(expense ratio)가 있다. 매매 수수료
@@ -225,9 +228,16 @@ class LiveOverseasBroker:
     계좌에 실제로 있어도 이 장부에 없으면 거부한다.
     """
 
-    def __init__(self, client, book: OverseasPositionBook | None = None):
+    def __init__(self, client, book: OverseasPositionBook | None = None, order_book=None):
         self.client = client
         self.book = book or OverseasPositionBook()
+        # ★★★ 국내주식(daytrader/orders.py)과 같은 설계 - 주문 전송 중
+        # 타임아웃이 나면 재시도할 수 없다(이미 접수됐을 수 있어 재전송하면
+        # 2배로 산다). order_book 없이는 이 안전장치가 통째로 빠지므로,
+        # 실거래에서는 반드시 엔진이 넘겨줘야 한다(_send 가 강제한다).
+        self.order_book = order_book
+        self.halted = False
+        self.halt_reason = ""
 
     def cash(self) -> float:
         try:
@@ -235,6 +245,43 @@ class LiveOverseasBroker:
             return float(bp.get("cash") or bp.get("cashBasedBuyingPower") or 0)
         except Exception:
             return 0.0
+
+    def _send(self, side: str, symbol: str, quantity, reason: str = "") -> str | None:
+        """의도를 먼저 기록한 뒤 시장가로 보낸다(daytrader/orders.py 의 설계 그대로).
+        network-uncertain 이면 재전송 대신 resolve_uncertain() 으로 조회해 확인한다 -
+        확인도 안 되면 이 브로커를 halt 시키고 OrderUncertainError 를 던진다(모르는
+        상태로 계속 사고팔지 않는다).
+        """
+        if self.order_book is None:
+            raise RuntimeError("LiveOverseasBroker 는 order_book 없이 실거래를 낼 수 없습니다.")
+        coid = new_coid(side, symbol)
+        intent = OrderIntent(
+            coid=coid, at=iso(now_kst()), mode="live", symbol=symbol, name="",
+            side=side, order_type="MARKET", quantity=quantity, price=0.0,
+            reason=reason, verdict_id=None,
+        )
+        self.order_book.record(intent)
+        try:
+            result = self.client.create_order(symbol, side, "MARKET", quantity, clientOrderId=coid)
+            order_id = result.get("orderId") if isinstance(result, dict) else None
+            self.order_book.update(coid, status="sent", order_id=order_id)
+            return order_id
+        except TossApiError as exc:
+            if exc.code == "network-uncertain":
+                order_id = resolve_uncertain(self.client, intent, self.order_book)
+                if order_id is not None:
+                    return order_id
+                # ★★★ 접수 여부를 끝내 확인하지 못했다 - 재전송하면 이중 주문,
+                # 그냥 넘어가면 포지션 기록 누락(다음 스캔에서 또 산다). 둘 다
+                # 위험하니 이 시장 전체를 멈추고 사람에게 알린다.
+                self.halted = True
+                self.halt_reason = (
+                    f"{symbol} {side} 주문 접수 여부를 확인하지 못했습니다 - "
+                    "토스 앱에서 직접 확인한 뒤 매매를 재개하세요."
+                )
+                raise OrderUncertainError(self.halt_reason) from exc
+            self.order_book.update(coid, status="unknown", error=str(exc))
+            raise
 
     def buy(self, symbol: str, krw_amount: float, price: float, technique: str = "") -> OverseasPosition | None:
         # ★ 위와 같은 이유 - 실거래라 더더욱 모르는 값으로 주문하면 안 된다.
@@ -245,8 +292,7 @@ class LiveOverseasBroker:
         quantity = int(krw_amount / price)  # ★ 해외주식 매수는 정수 수량만(공식 문서: 소수점은 미국 시장가 매도에만 허용).
         if quantity < 1:
             return None
-        result = self.client.create_order(symbol, "BUY", "MARKET", quantity)
-        order_id = result.get("orderId") if isinstance(result, dict) else None
+        order_id = self._send("BUY", symbol, quantity, reason=technique)
         pos = OverseasPosition(
             symbol=symbol, quantity=quantity, entry_price=price,
             entry_time=time.time(), peak_price=price, technique=technique, order_id=order_id, name=symbol,
@@ -264,7 +310,7 @@ class LiveOverseasBroker:
         quantity = int(amount / price)
         if quantity < 1:
             return None
-        self.client.create_order(symbol, "BUY", "MARKET", quantity)
+        self._send("BUY", symbol, quantity, reason="add")
         _merge_buy(pos, quantity, price, quantity * price)
         return pos
 
@@ -278,7 +324,7 @@ class LiveOverseasBroker:
         if qty >= held:
             qty = held
         partial = qty < held
-        self.client.create_order(symbol, "SELL", "MARKET", int(qty) if float(qty).is_integer() else qty)
+        self._send("SELL", symbol, int(qty) if float(qty).is_integer() else qty, reason=reason)
         # ★★★ 청산은 절대 실패하면 안 된다 - 못 팔면 손실로 직결된다.
         # 값이 이상하면 0 으로 두고서라도 포지션은 정리한다(손익 계산이
         # 틀리는 것보다 종목을 못 파는 쪽이 훨씬 위험하다).

@@ -35,6 +35,7 @@ from daytrader.overseas_broker import (
     LiveOverseasBroker, NotOwnedError, OverseasPosition, OverseasPositionBook, PaperOverseasBroker,
 )
 from daytrader import news_guard, sizing
+from daytrader.orders import OrderBook
 from daytrader.perf_stats import summarize_closed_trades
 from daytrader.playbook import Bar, Playbook
 
@@ -471,7 +472,10 @@ class OverseasEngine:
 
         self.is_live = (self.overseas_cfg.mode == "live") and bool(cfg.client_id and cfg.client_secret)
         if self.is_live:
-            self.broker = LiveOverseasBroker(self.client, book=self.state.book)
+            # ★★★ [1-5] 국내주식과 같은 이중 주문 방지 설계 - 별도 디렉터리에
+            # 주문 의도를 남긴다(국내주식 orders.jsonl 과 절대 안 섞이게).
+            order_book = OrderBook(os.path.join(cfg.state_dir, "overseas_orders"))
+            self.broker = LiveOverseasBroker(self.client, book=self.state.book, order_book=order_book)
         else:
             # ★★★ 실제로 겪은 버그(국내주식 engine.py 에서 먼저 발견돼 고쳐진 것과 같은 종류) -
             # 재시작할 때마다 모의매매 현금이 그동안의 손익과 무관하게 매번 총 투자금액 그대로
@@ -773,6 +777,11 @@ class OverseasEngine:
         실제 현재 시각(datetime.now().astimezone())을 쓴다.
         """
         now = now or datetime.now().astimezone()
+        # ★★★ [1-5] 실거래 브로커가 주문 접수 여부를 끝내 확인 못해 멈춘 상태면
+        # (network-uncertain 뒤 resolve_uncertain() 도 실패) 다른 조건과 무관하게
+        # 신규 진입을 막는다 - 모르는 상태로 계속 사고팔지 않는다.
+        if getattr(self.broker, "halted", False):
+            return {"halted": True, "resume_at": None, "reason": self.broker.halt_reason}
         r = self.cfg.risk
         self.state._reset_if_new_day()
         today_closed = [c for c in self.state.closed if isinstance(c, dict) and _is_today_ts(c.get("exit_time"))]
