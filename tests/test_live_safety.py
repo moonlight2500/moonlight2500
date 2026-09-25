@@ -1038,7 +1038,6 @@ def test_overseas_status_exposes_auto_select_when_engine_off() -> None:
     정확히 알 수 있어야 한다.
     """
     print("\n== 엔진이 꺼져 있어도 /api/overseas/status가 auto_select를 정확히 노출 ==")
-    import asyncio
     import shutil
     import tempfile as _tempfile
     import daytrader.server as server
@@ -1056,11 +1055,10 @@ def test_overseas_status_exposes_auto_select_when_engine_off() -> None:
         raw["overseas"]["auto_select"] = True
         yaml.dump(raw, open(server.CONFIG_PATH, "w", encoding="utf-8"), allow_unicode=True)
 
-        async def scenario():
-            status = await server.overseas_status()
-            check("엔진 꺼진 상태에서도 auto_select=True가 정확히 노출됨", status.get("auto_select") is True)
-
-        asyncio.run(scenario())
+        # ★★ [8-1] overseas_status() 는 이제 일반 def(동기) 라우트다(FastAPI 가
+        # 스레드풀에서 돌린다) - 더 이상 코루틴이 아니라서 await 없이 직접 부른다.
+        status = server.overseas_status()
+        check("엔진 꺼진 상태에서도 auto_select=True가 정확히 노출됨", status.get("auto_select") is True)
     finally:
         server.CONFIG_PATH = orig_config_path
         server._overseas_engine = orig_engine
@@ -1073,7 +1071,6 @@ def test_overseas_ticker_uses_auto_selected_watchlist() -> None:
     실시간 시세를 종목선정 화면에서 아예 볼 수 없었던 문제다.
     """
     print("\n== /api/overseas/ticker가 고정 목록이 아니라 자동선정 결과를 조회함 ==")
-    import asyncio
     import shutil
     import tempfile as _tempfile
     import daytrader.server as server
@@ -1111,14 +1108,12 @@ def test_overseas_ticker_uses_auto_selected_watchlist() -> None:
 
         market_mod._fetch_yahoo_session_group = fake_fetch
 
-        async def scenario():
-            await server.overseas_ticker()
-            symbols = [t[0] for t in captured.get("items", [])]
-            check("★★★ ticker가 자동선정 결과(TSLA, GOOGL)를 조회함", symbols[:2] == ["TSLA", "GOOGL"], str(symbols))
-            # ★ 직접 추가한 관심 종목은 자동선정·테마와 별개로 항상 거래 대상이라 함께 조회한다.
-            check("관심 종목(AAPL 등)도 함께 조회함", all(x in symbols for x in ("AAPL", "NVDA", "MSFT")), str(symbols))
-
-        asyncio.run(scenario())
+        # ★★ [8-1] overseas_ticker() 도 이제 일반 def(동기) 라우트다 - await 없이 직접 부른다.
+        server.overseas_ticker()
+        symbols = [t[0] for t in captured.get("items", [])]
+        check("★★★ ticker가 자동선정 결과(TSLA, GOOGL)를 조회함", symbols[:2] == ["TSLA", "GOOGL"], str(symbols))
+        # ★ 직접 추가한 관심 종목은 자동선정·테마와 별개로 항상 거래 대상이라 함께 조회한다.
+        check("관심 종목(AAPL 등)도 함께 조회함", all(x in symbols for x in ("AAPL", "NVDA", "MSFT")), str(symbols))
     finally:
         server.CONFIG_PATH = orig_config_path
         server._overseas_engine = orig_engine

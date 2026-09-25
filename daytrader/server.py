@@ -2338,7 +2338,15 @@ def overseas_selection(refresh: int = 0):
 
 @app.get("/api/overseas/status")
 @api_guard
-async def overseas_status():
+def overseas_status():
+    """★★★ [8-1] 실제로 겪은 버그(py-spy 로 확인) - 이 라우트가 async def 였는데,
+    엔진이 꺼져 있을 때 _usd_krw_rate() 가 (캐시가 비었으면) market.snapshot() 을
+    동기(블로킹)로 호출한다 - 엔진이 켜져 있어도 _overseas_engine.snapshot() 안의
+    _safe_usd_krw_rate() 가 같은 경로를 탄다. await 로 스레드에 넘기지 않고
+    async def 안에서 그대로 부르면, 그 네트워크 호출이 끝날 때까지 서버 전체
+    (다른 모든 요청)가 멈춘다. 이 라우트는 await 를 쓰지 않으므로 일반 def 로
+    바꿔 FastAPI 가 스레드풀(run_in_threadpool)에서 돌리게 한다 - 동작은 그대로.
+    """
     if _overseas_engine is not None:
         return _overseas_engine.snapshot()
     # ★★★ 실제로 겪은 버그 - 엔진을 아직 시작 안 했거나 정지한 상태에서
@@ -2632,8 +2640,13 @@ async def swing_journal():
 
 @app.get("/api/overseas/ticker")
 @api_guard
-async def overseas_ticker():
-    """★ 관심 종목의 시세만 관찰한다. 자동매매 로직은 없다."""
+def overseas_ticker():
+    """★ 관심 종목의 시세만 관찰한다. 자동매매 로직은 없다.
+    ★★ [8-1] get_client().stocks(...)·market_mod._fetch_yahoo_session_group(...) 모두
+    실제 네트워크 호출(블로킹)이라, 원래 async def 로 돼 있으면 그동안 이벤트 루프
+    전체가 멈춘다(overseas_status() 와 같은 문제). 일반 def 로 바꿔 FastAPI 가 스레드
+    풀에서 돌리게 한다.
+    """
     from daytrader import market as market_mod
     from daytrader import netutil
     from daytrader.timeutil import now_kst
@@ -2646,7 +2659,7 @@ async def overseas_ticker():
     # 에서 볼 수 없었다. /api/overseas/status 가 이미 정확한 유효
     # 목록(엔진이 돌면 자동선정 결과, 아니면 고정 목록)을 계산해 주니
     # 그대로 재사용한다.
-    status = await overseas_status()
+    status = overseas_status()
     watchlist = status.get("watchlist") or cfg.overseas.watchlist
     if not watchlist:
         return {"ok": True, "rows": [], "note": "관심 종목이 없습니다. [설정] → 해외주식에서 티커를 추가하세요."}
@@ -2672,9 +2685,12 @@ async def overseas_ticker():
 
 @app.get("/api/bithumb/ticker")
 @api_guard
-async def bithumb_ticker():
+def bithumb_ticker():
     """★ 인증이 필요 없는 공개 시세만 본다 - 계좌 조회 없이도 관찰할 수 있다.
     ★★ 아직 자동매매 로직은 없다. 이 화면은 관찰용이다.
+    ★★ [8-1] BithumbClient.ticker() 는 실제 네트워크 호출(블로킹)이다 - async def 로
+    두면 그동안 이벤트 루프 전체가 멈춘다. 일반 def 로 바꿔 FastAPI 가 스레드풀에서
+    돌리게 한다.
     """
     from daytrader.bithumb_api import BithumbClient, BithumbApiError
     try:
@@ -3549,7 +3565,7 @@ def get_news_feed():
 
 @app.get("/api/market")
 @api_guard
-async def get_market(refresh: bool = False, ttl: float | None = None):
+def get_market(refresh: bool = False, ttl: float | None = None):
     """지수·선물·미국주·환율·코인 - 매매 판단에 개입하지 않는 관찰용 화면.
     ★ 국내 개별 종목은 토스증권 API 를 1순위로 쓴다 - 키가 등록돼 있으면 넘긴다.
     """
@@ -3566,7 +3582,7 @@ async def get_market(refresh: bool = False, ttl: float | None = None):
 
 @app.get("/api/news")
 @api_guard
-async def get_news(hours: float = 24.0):
+def get_news(hours: float = 24.0):
     from daytrader.screener import load_themes
     from daytrader.simulator import load_theme_names
     cfg = cfg_now()
@@ -3580,7 +3596,7 @@ async def get_news(hours: float = 24.0):
 
 @app.post("/api/news/refresh")
 @api_guard
-async def refresh_news():
+def refresh_news():
     feed = get_news_feed()
     items, errors = feed.fetch(force=True)
     return {"ok": True, "items": len(items), "errors": errors}
@@ -3588,7 +3604,7 @@ async def refresh_news():
 
 @app.get("/api/news/test")
 @api_guard
-async def test_news():
+def test_news():
     return get_news_feed().self_test()
 
 
