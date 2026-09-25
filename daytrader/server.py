@@ -1982,13 +1982,28 @@ def build_market_review(market: str = "domestic") -> str | None:
     return mc.compose(cfg, headlines, market=market, price_snapshot=price_snapshot)
 
 
+def _market_review_unavailable_reason(cfg) -> str:
+    """build_market_review() 가 None 을 돌려줬을 때 화면·로그에 보여줄 문구.
+    ★★★ 예전에는 이 사유가 항상 "Groq 키가 등록되어 있지 않습니다" 하나뿐이었다 - 키를 이미
+    등록해 두고도 두 키가 모두 한도 초과·인증 오류로 막힌 날에도 똑같이 "키가 없다"고 나와
+    사용자가 잘못된 곳(설정 화면에서 키를 다시 넣는 것)을 고치게 만들었다. llm.status() 의
+    실제 실패 사유(예: "한도 초과(429)")를 등록 여부와 구분해서 보여준다."""
+    from daytrader import llm
+    if not llm.available(cfg):
+        return "Groq 키가 등록되어 있지 않습니다([설정] → 속보에서 Groq 키를 등록하세요)."
+    err = (llm.status().get("last_error") or "").strip()
+    if err:
+        return f"Groq 를 지금 쓸 수 없습니다({_redact(err)}) - 규칙 기반으로 넘어가는 뉴스 필터와 달리, 시장 평가는 Groq 없이는 만들 수 없어 건너뜁니다."
+    return "오늘 참고할 뉴스·시세 자료가 없거나 Groq 응답이 비어 있습니다."
+
+
 def _send_market_review(market: str = "domestic") -> tuple:
     from daytrader import notify
     from daytrader import market_commentary as mc
     cfg = cfg_now()
     text = build_market_review(market)
     if not text:
-        return False, "뉴스·시세가 없거나 Groq 를 쓸 수 없습니다."
+        return False, _market_review_unavailable_reason(cfg)
     ok, err = notify.Telegram(cfg).send_now(text)
     if ok:
         mc.save_review(cfg, market, text)
@@ -2098,7 +2113,7 @@ def preview_market_review(market: str = "domestic"):
         raise HTTPException(status_code=400, detail="market 은 domestic · overseas 중 하나여야 합니다.")
     text = build_market_review(market)
     if not text:
-        return {"text": "", "reason": "뉴스·시세가 없거나 Groq 키가 등록되어 있지 않습니다([설정] → 속보에서 Groq 키를 등록하세요)."}
+        return {"text": "", "reason": _market_review_unavailable_reason(cfg_now())}
     return {"text": text}
 
 
