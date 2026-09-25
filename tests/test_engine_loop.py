@@ -1097,6 +1097,22 @@ def test_overnight_oco_replace_failure_closes_instead_of_carrying() -> None:
     check("일지에 재설정 실패 경고가 남음", any("재설정 실패" in r["explain"] for r in rows), str(rows))
 
 
+def test_overnight_rearm_failure_sends_alert() -> None:
+    """다음 날 개장 때 넘긴 포지션의 서버 OCO 재등록이 실패하면 일지뿐 아니라 알림도 보낸다."""
+    print("\n== 조건부 오버나이트: 다음 날 OCO 재등록 실패 시 알림 전송 ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-09", at="09:01", entry=70000.0, place_ok=False)
+    pos.carry_date = "2026-09-08"
+    eng.cfg.exit.use_conditional_oco = True
+    sent = []
+    eng.notifier.send = lambda text, event=None, force=False: sent.append(text)
+
+    eng._rearm_carried_oco()
+
+    rows = eng.journal.read(kinds=["halt"])
+    check("일지에 재등록 실패가 남음", any("재등록에 실패" in r["explain"] for r in rows), str(rows))
+    check("★알림이 전송됨", any("재등록에 실패" in t for t in sent), str(sent))
+
+
 def test_overnight_disabled_closes_everything() -> None:
     """(7) allow_overnight 가 꺼져 있으면 이익과 무관하게 예전처럼 전부 당일 청산한다."""
     print("\n== 조건부 오버나이트: allow_overnight 꺼지면 전부 당일 청산(예전 방식) ==")
@@ -1122,7 +1138,8 @@ def main() -> None:
         test_close_position_survives_oco_just_filled_race,
         test_overnight_carry_profitable_position, test_overnight_reject_low_profit,
         test_overnight_skip_before_holiday, test_overnight_carried_position_force_closes_next_day,
-        test_overnight_oco_replace_failure_closes_instead_of_carrying, test_overnight_disabled_closes_everything,
+        test_overnight_oco_replace_failure_closes_instead_of_carrying, test_overnight_rearm_failure_sends_alert,
+        test_overnight_disabled_closes_everything,
     ]
     for t in tests:
         t()

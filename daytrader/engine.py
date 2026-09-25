@@ -1454,19 +1454,26 @@ class Engine:
                     pos.oco_id = None
                 new_id = self.broker.place_oco(pos, oco_cfg)
                 if new_id is None:
-                    self.journal.write(
-                        "halt",
-                        f"{pos.name} 오버나이트 포지션의 서버 손절 재등록에 실패했습니다 - "
-                        "프로그램 내부 손절만 작동합니다. 계좌를 직접 확인하세요.",
-                        symbol=pos.symbol, name=pos.name,
-                    )
+                    msg = (f"{pos.name} 오버나이트 포지션의 서버 손절 재등록에 실패했습니다 - "
+                           "프로그램 내부 손절만 작동합니다. 계좌를 직접 확인하세요.")
+                    self.journal.write("halt", msg, symbol=pos.symbol, name=pos.name)
+                    self._alert_overnight_oco_failure(msg)
                 else:
                     pos.oco_id = new_id
                 changed = True
             except Exception as exc:
                 log.warning("%s 오버나이트 OCO 재등록 실패: %s", pos.symbol, exc)
+                self._alert_overnight_oco_failure(
+                    f"{pos.name} 오버나이트 포지션의 서버 손절 재등록 중 오류가 났습니다 - 계좌를 직접 확인하세요.")
         if changed:
             self.state.save()
+
+    def _alert_overnight_oco_failure(self, msg: str) -> None:
+        # 일지에만 남기면 개장 직후 아무도 모른 채 서버 손절 없이 장이 흘러간다.
+        try:
+            self.notifier.send("⚠️ " + msg)
+        except Exception as exc:
+            log.warning("오버나이트 OCO 실패 알림 전송 실패: %s", exc)
 
     def _rescreen_info(self) -> dict:
         """★★★ "종목 선정이 언제 다시되는지" - 마지막 스크리닝 시각 +
