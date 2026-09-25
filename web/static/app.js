@@ -234,6 +234,21 @@
     return el("div", { class: "skel", style: { height: (height || 80) + "px" } });
   }
 
+  // ★★★ "탭을 바꾸면 1~2초 화면이 비어 있다" - 대부분의 패널은 onShow() 가
+  // API 를 기다리는 동안 스스로는 아무것도 안 그린다(각 렌더 함수가 데이터를
+  // 받은 뒤에야 panel.innerHTML 을 채우기 때문). 패널마다 로딩 표시를 따로
+  // 넣는 대신, 여기 한 곳에서 - 패널이 비어 있을 때(처음 여는 화면)만 - 공용
+  // 스켈레톤을 먼저 넣어 둔다. 실제 렌더 함수가 끝나면 다들 panel.innerHTML
+  // 을 비우고 다시 그리므로 이 플레이스홀더는 자연히 사라진다.
+  function _tabLoadingPlaceholder() {
+    const wrap = el("div", {});
+    wrap.appendChild(skeleton(28));
+    wrap.appendChild(el("div", { style: { height: "var(--s2)" } }));
+    wrap.appendChild(skeleton(140));
+    wrap.appendChild(el("div", { class: "empty", text: "불러오는 중…" }));
+    return wrap;
+  }
+
   // ━━ 자동 갱신 스크롤 보존 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // ★★★ "자동 갱신되면 화면이 맨 위로 튄다" - 종목선정/시세목록/실험실처럼
   // 긴 목록이 있는 패널은 주기적으로 통째로(또는 큰 덩어리로) 지우고 다시
@@ -406,6 +421,14 @@
         && (Date.now() - handlers._loadedAt) < handlers.cacheMs && !opts.force;
       if (!fresh) {
         handlers._loadedAt = Date.now();
+        // ★ 패널이 비어 있으면(이번 세션에서 처음 여는 화면) onShow() 가
+        // 데이터를 받아 그리기 전까지 화면이 텅 비어 보인다 - 그 사이를
+        // 공용 스켈레톤으로 채운다. onShow() 의 실제 렌더가 곧 이 패널을
+        // 비우고 다시 그리므로 따로 지워줄 필요는 없다.
+        const panelEl = $('.panel[data-panel="' + id + '"]');
+        if (panelEl && !panelEl.hasChildNodes()) {
+          panelEl.appendChild(_tabLoadingPlaceholder());
+        }
         const r = handlers.onShow();
         if (r && typeof r.catch === "function") r.catch(() => { handlers._loadedAt = 0; });
       }
