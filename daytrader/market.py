@@ -10,6 +10,8 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests
+
 from daytrader import netutil
 from daytrader.timeutil import now_kst
 
@@ -22,7 +24,11 @@ def _short_error(exc: Exception, context: str) -> str:
     "HTTPSConnectionPool(host='proxy.internal', port=8080): ...").  이 값들은 매매 판단과
     무관한 "보기만 하는" 시세 카드일 뿐인데, str(exc) 를 그대로 화면(/api/market)에 보내면
     이 PC가 어떤 사내망·프록시 뒤에 있는지가 드러난다. 그래서 화면에는 짧고 안전한 한국어
-    메시지만 보내고, 실제 원인은 서버 로그에만(개발자가 진단할 때만 보이게) 남긴다."""
+    메시지만 보내고, 실제 원인은 서버 로그에만(개발자가 진단할 때만 보이게) 남긴다.
+
+    ★★ [4-1] 과 병합: 로그는 여기서 "한 번만" 남긴다 - error_code 분류(_classify_exc)는
+    로그를 남기지 않는 순수 분류 함수이고, _err() 가 이 함수를 호출해 메시지를 만들면서
+    동시에 error_code 를 붙인다. 그래서 실패 한 건당 로그 한 줄만 남는다."""
     _log.warning("시세 조회 실패(%s): %s", context, exc)
     return "일시적으로 시세를 가져오지 못했습니다."
 
@@ -105,6 +111,35 @@ def _to_float(v) -> float:
         return float(str(v).replace(",", ""))
     except (TypeError, ValueError):
         return 0.0
+
+
+# ★★ 시세 조회 예외를 화면에 그대로 보여주지 않는다 - 원본 예외 문자열에는
+# 사내 프록시 주소·호스트명 등 내부 정보가 그대로 담겨 있을 수 있다(사내
+# 프록시 인증서 오류가 대표적). 로그에는 원본을 남기고, 화면에는 코드 +
+# 짧은 한국어 메시지만 준다. 코드가 같으면 같은 원인이라는 뜻이라, 화면
+# 쪽에서 카드마다 반복하지 않고 배너 하나로 묶을 수 있다.
+def _classify_exc(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "timeout", "응답 시간 초과"
+    if isinstance(exc, requests.exceptions.SSLError):
+        return "ssl", "보안 연결(SSL) 오류"
+    if isinstance(exc, requests.exceptions.ProxyError):
+        return "proxy", "프록시 연결 오류"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "conn", "연결 실패"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        return "http", "서버 응답 오류"
+    if isinstance(exc, (ValueError, KeyError, IndexError, TypeError)):
+        return "parse", "응답 형식 오류"
+    return "unknown", "조회 실패"
+
+
+def _err(exc: Exception, where: str) -> dict:
+    """실패 지점마다 쓰는 공용 헬퍼 - _short_error() 가 로그를 남기고 안전한 고정
+    한국어 문구를 돌려주고, _classify_exc() 가 화면 쪽 배너 묶기용 error_code 를
+    붙인다. 로그는 _short_error() 안에서 한 번만 남는다(이중 로깅 없음)."""
+    code, _msg = _classify_exc(exc)
+    return {"error": _short_error(exc, where), "error_code": code}
 
 
 # ━━ 네이버 배치 조회 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -307,9 +342,9 @@ def _naver_batch(sess, url_template: str, items: list) -> dict:
                 "name": r.get("stockName") or r.get("nm"), "symbol": code,
             }
     except Exception as exc:
-        msg = _short_error(exc, f"네이버 일괄조회({url_template})")
+        err = _err(exc, f"naver_batch:{url_template}")
         for code, _label in items:
-            out[code] = {"error": msg}
+            out[code] = dict(err)
     return out
 
 
@@ -327,7 +362,7 @@ def _naver_fx(sess, code: str) -> dict:
         sign = _sign(direction)
         return {"last": last, "diff": sign * diff_abs}
     except Exception as exc:
-        return {"error": _short_error(exc, f"네이버 환율({code})")}
+        return _err(exc, "naver_fx")
 
 
 # ━━ 야후 파이낸스 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -345,7 +380,7 @@ def _yahoo_simple(sess, code: str) -> dict:
         diff = (last - prev) if (last is not None and prev) else None
         return {"last": last, "diff": diff, "prev_close": prev, "market_state": market_state}
     except Exception as exc:
-        return {"error": _short_error(exc, f"야후 단순조회({code})")}
+        return _err(exc, "yahoo_simple")
 
 
 def _session_from_ny_time() -> str:
@@ -459,7 +494,7 @@ def _yahoo_session_quote(sess, code: str) -> dict:
             "market_state": market_state,
         }
     except Exception as exc:
-        return {"error": _short_error(exc, f"야후 세션조회({code})")}
+        return _err(exc, "yahoo_session")
 
 
 def _fetch_yahoo_session_group(sess, items: list, now) -> list:
@@ -472,7 +507,7 @@ def _fetch_yahoo_session_group(sess, items: list, now) -> list:
             try:
                 results[code] = fut.result()
             except Exception as exc:
-                results[code] = {"error": _short_error(exc, f"야후 세션조회({code})")}
+                results[code] = _err(exc, "yahoo_session_group")
 
     rows = []
     for code, label in items:  # 완료 순서가 아니라 정의 순서대로 카드가 나오게 정렬한다.
@@ -550,7 +585,7 @@ def _fetch_coins(sess, items: list) -> dict:
                 else:
                     by_code[c] = {"last": last_usdt, "diff": change_usdt, "src": "바이낸스(USDT)"}
             except Exception as exc:
-                by_code[c] = {"error": _short_error(exc, f"바이낸스 원화환산({c})"), "src": "바이낸스·원화환산"}
+                by_code[c] = {**_err(exc, "binance"), "src": "바이낸스·원화환산"}
 
     for c in codes:
         by_code.setdefault(c, {"error": "응답에 값이 없습니다.", "src": "빗썸"})
@@ -574,6 +609,7 @@ def _row(label: str, kind: str, src: str, data: dict, now, stale_source: bool) -
     if "error" in data:
         return {"label": label, "last": None, "diff": None, "pct": None, "dp": _dp_for(kind),
                 "status": "-", "kind": kind, "src": src, "error": data["error"],
+                "error_code": data.get("error_code", "unknown"),
                 "symbol": data.get("symbol")}
 
     last = data.get("last")
@@ -641,9 +677,9 @@ def snapshot(force: bool = False, ttl: float | None = None, toss_client=None) ->
         rows = [_row(label, "domestic_index", "네이버", idx_data.get(code, {"error": "no data"}), now, False)
                 for code, label in DOMESTIC_INDEX_ITEMS]
     except Exception as exc:
-        msg = _short_error(exc, "국내 지수 조회")
-        errors.append(f"국내 지수 조회 실패: {msg}")
-        rows = [_row(label, "domestic_index", "네이버", {"error": msg}, now, False)
+        err = _err(exc, "domestic_index")
+        errors.append(f"국내 지수 조회 실패: {err['error']} ({err['error_code']})")
+        rows = [_row(label, "domestic_index", "네이버", err, now, False)
                 for code, label in DOMESTIC_INDEX_ITEMS]
 
     # ── 국내 개별 종목(코스피 상위5·코스닥 상위3) - 토스증권 1순위, 네이버 2순위 ──
@@ -656,9 +692,9 @@ def snapshot(force: bool = False, ttl: float | None = None, toss_client=None) ->
                        stock_data.get(code, {"error": "no data"}), now, False)
                  for code, label in stock_items]
     except Exception as exc:
-        msg = _short_error(exc, "국내 종목 조회")
-        errors.append(f"국내 종목 조회 실패: {msg}")
-        rows += [_row(label, "domestic_stock", "네이버", {"error": msg}, now, False)
+        err = _err(exc, "domestic_stock")
+        errors.append(f"국내 종목 조회 실패: {err['error']} ({err['error_code']})")
+        rows += [_row(label, "domestic_stock", "네이버", err, now, False)
                   for code, label in stock_items]
     _add_group("국내", rows)
 
@@ -672,9 +708,9 @@ def snapshot(force: bool = False, ttl: float | None = None, toss_client=None) ->
         rows = [_row(label, "world_index", "네이버", world_data.get(code, {"error": "no data"}), now, True)
                 for code, label in WORLD_INDEX_ITEMS]
     except Exception as exc:
-        msg = _short_error(exc, "해외 지수 조회")
-        errors.append(f"해외 지수 조회 실패: {msg}")
-        rows = [_row(label, "world_index", "네이버", {"error": msg}, now, True) for code, label in WORLD_INDEX_ITEMS]
+        err = _err(exc, "world_index")
+        errors.append(f"해외 지수 조회 실패: {err['error']} ({err['error_code']})")
+        rows = [_row(label, "world_index", "네이버", err, now, True) for code, label in WORLD_INDEX_ITEMS]
     _add_group("해외", rows)
 
     # ── 미국 대형주 (야후 세션조회, 동시 호출) ──
@@ -697,9 +733,9 @@ def snapshot(force: bool = False, ttl: float | None = None, toss_client=None) ->
                       coin_data.get(code, {"error": "no data"}), now, False)
                 for code, label in COIN_ITEMS]
     except Exception as exc:
-        msg = _short_error(exc, "코인 조회")
-        errors.append(f"코인 조회 실패: {msg}")
-        rows = [_row(label, "coin", "업비트", {"error": msg}, now, False) for code, label in COIN_ITEMS]
+        err = _err(exc, "coin")
+        errors.append(f"코인 조회 실패: {err['error']} ({err['error_code']})")
+        rows = [_row(label, "coin", "업비트", err, now, False) for code, label in COIN_ITEMS]
     _add_group("암호화폐", rows)
 
     # ★★★ "야간시장(코스피200 야간선물 등) 시세를 받아올 수 있는지

@@ -6006,13 +6006,20 @@
     "암호화폐": "비트코인 등 위험자산 심리의 참고 지표입니다.",
   };
 
-  function renderMarketCard(row) {
+  // ★★ 같은 원인(error_code)으로 여러 카드가 한꺼번에 실패하면(예: 네이버가
+  // 통째로 막힘) 카드마다 "조회 실패: ..."를 반복하는 대신 배너 하나로
+  // 묶는다 - suppressedCodes 에 들어있는 코드는 카드에서 메시지를 생략한다.
+  function renderMarketCard(row, suppressedCodes) {
     const card = el("div", { class: "card", style: { minWidth: "196px" } });
     const titleText = row.symbol ? `${row.label} (${row.symbol})` : row.label;
     card.appendChild(el("div", { style: { fontWeight: "600" }, text: titleText }));
 
     if (row.error) {
-      card.appendChild(el("div", { class: "hint", text: "조회 실패: " + row.error }));
+      const suppressed = suppressedCodes && row.error_code && suppressedCodes.has(row.error_code);
+      card.appendChild(el("div", {
+        class: "hint",
+        text: suppressed ? "-" : "조회 실패: " + row.error,
+      }));
       return card;
     }
 
@@ -6157,10 +6164,28 @@
       body.innerHTML = "";
       const tab = tabs.find((t) => t.id === _marketTab);
       if (!tab) return;
+      // ★★ 같은 error_code 로 카드 여러 개가 한꺼번에 실패하면(예: 네이버
+      // 배치 자체가 막힘) 카드마다 같은 문구를 반복하지 않고 배너 하나로
+      // 묶는다 - 3개 이상이면 "많다"고 본다.
+      const rows = tab.groups.flatMap((g) => g.rows);
+      const byCode = {};
+      rows.forEach((r) => {
+        if (!r.error || !r.error_code) return;
+        const c = (byCode[r.error_code] = byCode[r.error_code] || { msg: r.error, n: 0 });
+        c.n += 1;
+      });
+      const suppressedCodes = new Set(Object.keys(byCode).filter((code) => byCode[code].n >= 3));
+      suppressedCodes.forEach((code) => {
+        const c = byCode[code];
+        body.appendChild(el("div", {
+          class: "banner warn",
+          text: `${c.msg} - ${c.n}건 조회 실패`,
+        }));
+      });
       tab.groups.forEach((g) => {
         // ★ 그룹이 탭으로 나뉘어 있어 그룹 제목은 뺀다(카드마다 이름이 있다).
         const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(196px, 1fr))", gap: "var(--s2)", marginBottom: "var(--s3)" } });
-        g.rows.forEach((row) => grid.appendChild(renderMarketCard(row)));
+        g.rows.forEach((row) => grid.appendChild(renderMarketCard(row, suppressedCodes)));
         body.appendChild(grid);
       });
     };

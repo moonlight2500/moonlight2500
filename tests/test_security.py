@@ -563,11 +563,24 @@ def test_market_errors_dont_leak_network_details() -> None:
     check("★ 원본 예외 메시지(호스트명 등)는 화면으로 안 나감", "proxy.internal.corp" not in short and "8080" not in short)
     check("대신 짧고 고정된 한국어 안내문을 돌려줌", short == "일시적으로 시세를 가져오지 못했습니다.")
 
+    # ★ [4-1] _err() 도 같은 안전한 경로(_short_error)를 거쳐 메시지를 만들고,
+    # 화면이 카드를 묶어 배너로 보여줄 수 있게 error_code 를 함께 준다.
+    import requests as _requests
+    err = market._err(_requests.exceptions.ConnectionError(leaky), "테스트 조회")
+    check("★ _err() 도 원본 예외 메시지를 화면으로 안 보냄",
+          "proxy.internal.corp" not in err["error"] and "8080" not in err["error"])
+    check("_err() 는 error_code 를 함께 줌(화면에서 같은 원인끼리 배너로 묶는 데 씀)",
+          err.get("error_code") == "conn")
+
     src = open(market.__file__, encoding="utf-8").read()
     check("market.py 안에 {\"error\": str(exc)} 처럼 예외를 그대로 화면으로 보내는 자리가 없음",
           '"error": str(exc)' not in src and "{exc}" not in src)
-    check("실패한 조회마다 _short_error() 를 거쳐 감(로그에는 원인이 남고, 화면에는 짧은 문구만 나감)",
-          src.count("_short_error(exc,") >= 10)
+    # ★ [2-8]+[4-1] 병합 이후에는 모든 실패 지점이 _err()(내부에서 _short_error() 를
+    # 한 번 호출해 로그를 남기고 error_code 도 함께 채움)를 거친다. _short_error() 를
+    # 직접 부르는 자리가 남아 있어도 되지만, 최소 하나(_err 내부)는 항상 있어야 한다.
+    check("실패한 조회마다 _err()(→ 내부에서 _short_error() 한 번) 를 거쳐 감"
+          "(로그에는 원인이 남고, 화면에는 짧은 문구 + error_code 만 나감)",
+          src.count("_err(exc,") >= 10 and src.count("_short_error(exc,") >= 1)
 
 
 def test_rss_xml_parsed_with_defusedxml() -> None:
