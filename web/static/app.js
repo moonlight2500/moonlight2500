@@ -289,6 +289,12 @@
     setup: "plug", themes: "hash", config: "sliders",
   };
 
+  // ★★★ "탭메뉴의... 아이콘이 너무 작다" + 이모지(🔀🇰🇷🌍🪙📈) 대신 다른 화면과 같은
+  // UI.icon() 선 아이콘을 쓴다 - 대시보드·종목선정·성과·매매일지·시장평가에서 시장을
+  // 고르는 탭이 전부 이 두 표를 함께 쓴다(모양·순서 통일).
+  const MARKET_TAB_ICON = { all: "layers", domestic: "building", overseas: "globe", crypto: "coins", swing: "trending-up" };
+  const MARKET_TAB_LABEL = { all: "통합", domestic: "국내주식", overseas: "해외주식", crypto: "암호화폐", swing: "스윙" };
+
   const NAV = [
     { group: "Trading", hint: "지금 무슨 일이 일어나고 있는지",
       tabs: [["dash", "대시보드"], ["selection", "종목 선정"], ["news", "속보"], ["market", "시장"]] },
@@ -2020,12 +2026,14 @@
 
   function renderMarketFilterSeg(currentValue, onChange) {
     const seg = el("div", { class: "seg" });
-    [["all", "🔀 통합"], ["domestic", "🇰🇷 국내주식"], ["overseas", "🌍 해외주식"], ["crypto", "🪙 암호화폐"], ["swing", "📈 스윙"]].forEach(([key, label]) => {
-      seg.appendChild(el("button", {
-        text: label, class: key === currentValue ? "active" : "",
+    ["all", "domestic", "overseas", "crypto", "swing"].forEach((key) => {
+      const btn = el("button", {
+        class: key === currentValue ? "active" : "",
         onclick: (e) => {
           $$("button", seg).forEach((b) => b.classList.remove("active"));
-          e.target.classList.add("active");
+          // ★ 버튼 안에 아이콘 span·svg 를 같이 넣은 뒤로는 클릭이 그 자식에서
+          // 시작할 수 있다(e.target) - 항상 버튼 자체(e.currentTarget)에 active 를 준다.
+          e.currentTarget.classList.add("active");
           onChange(key);
           // ★ 대시보드/종목선정/성과/매매일지 안의 시장 필터가 바뀌면(예: "국내주식"→
           // "해외주식") 통화 토글의 표시 여부도 같이 다시 계산한다 - onChange(key) 가
@@ -2033,7 +2041,10 @@
           // _currencyToggleRelevant() 가 새 값을 본다.
           if (typeof _updateCurrencyToggleVisibility === "function") _updateCurrencyToggleVisibility();
         },
-      }));
+      });
+      btn.insertAdjacentHTML("beforeend", `<span class="seg-icon" aria-hidden="true">${icon(MARKET_TAB_ICON[key])}</span>`);
+      btn.appendChild(el("span", { text: MARKET_TAB_LABEL[key] }));
+      seg.appendChild(btn);
     });
     return seg;
   }
@@ -2054,9 +2065,8 @@
         cols: el("div", { class: "cols grid-2" }), log: el("div"), tabsWrap: el("div"),
       };
     });
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: _dashIcon("dashboard") + " 대시보드" }));
-    panel.appendChild(head);
+    // ★ 상단바(#topbar-title)가 이미 "대시보드" 제목을 보여주므로 패널 안에서 또
+    // 띄우지 않는다(중복 제목 제거) - els.marketFilter 아래로 바로 이어진다.
     els.marketFilter.appendChild(renderMarketFilterSeg(_dashMarketFilter, (key) => {
       _dashMarketFilter = key;
       _applyDashMarketFilter();
@@ -2393,30 +2403,67 @@
   //   국내 항목이 통째로 사라졌다 - /api/status(꺼져 있어도 응답)로 항상 채운다.
   let _lastDomesticStatus = null;
 
-  // ★ 좌측 상단(매매 상태)을 시장별 이모지 + 우하단 점(모드 색)의 아이콘으로 보여준다(글자 라벨
+  // ★ 좌측 상단(매매 상태)을 시장별 아이콘 + 우하단 점(모드 색)으로 보여준다(글자 라벨
   // 없음) - 예전엔 "국내주식: 모의매매 중 · 해외주식: ..." 처럼 시장이 늘수록 문구가 계속 길어졌다.
   // 자세한 문구는 title(데스크톱 호버)과 클릭(모바일, #conn-indicator 와 같은 패턴)으로 본다.
+  // ★★★ "아이콘 이미지를 좀더 예쁘고 모던한 스타일로" - 국가 이모지(🇰🇷🌍🪙📈) 대신
+  // MARKET_TAB_ICON 의 UI.icon() 선 아이콘을 쓴다(시장 탭과 같은 아이콘이라 어디서든
+  // "이 모양 = 이 시장"이 통일된다).
   const STATE_LABEL_KO = {
-    idle: "대기", sim: "시뮬레이션", paper: "모의매매", live: "실거래",
-    halt: "중단", degraded: "저하", web: "관찰", replay: "리플레이",
+    idle: "자동매매 꺼짐", sim: "시뮬레이션 중", paper: "모의매매 중", live: "실거래 중",
+    halt: "매매 중단됨", degraded: "시세 연결 저하", web: "관찰 모드", replay: "리플레이 재생 중",
   };
+
+  // ★ "좌측상단 메뉴에 대기는 뭘 의미하는거야?" - 배지 문구만으로는 "지금 자동매매가
+  // 도는지, 어떻게 하면 되는지"가 안 보였다. 상태별로 "무슨 뜻인지 + 지금 뭘 할 수
+  // 있는지"까지 한 문장 더 붙여 title(호버)·클릭(모바일)로 보여준다.
+  const STATE_HELP_KO = {
+    idle: "국내주식 자동매매가 꺼져 있습니다(신호만 보고 주문은 내지 않음). [설정] → 거래선택에서 모드를 '모의매매'나 '실거래'로 바꾸면 시작됩니다.",
+    web: "신호만 기록하고 실제 주문은 내지 않는 관찰 모드입니다. [설정] → 거래선택에서 모드를 바꿀 수 있습니다.",
+    sim: "가짜 시장 데이터로 연습하는 시뮬레이션 중입니다 - 실제 계좌·시세와 무관합니다.",
+    paper: "실시간 시세로 가짜 주문을 내는 모의매매 중입니다 - 실제 돈은 움직이지 않습니다.",
+    live: "실제 계좌로 진짜 주문을 내는 실거래 중입니다 - 여기서 나가는 주문은 진짜 돈을 움직입니다.",
+    halt: "손실 한도 등으로 신규 매수가 멈췄습니다(보유 종목 청산은 계속됩니다). [대시보드]에서 원인을 확인하세요.",
+    degraded: "매매는 계속되지만 시세 연결이 원활하지 않습니다 - 정상화되면 자동으로 회복됩니다.",
+    replay: "과거 데이터를 다시 재생하는 중입니다(실제 매매가 아닙니다).",
+  };
+
+  // ★ 배지·라벨을 처음 만들 때만 tabindex·클릭/키보드 핸들러를 붙인다 - updateBand() 는
+  // 자주(폴링·SSE마다) 불리므로 매번 새 리스너를 더하면 안 된다.
+  // ★★★ 실제로 겪은 버그 - getText 를 클로저로 한 번만 넘기면(sideBadge 는 매번 다시
+  // 만들지 않고 재사용하는 고정 엘리먼트라) 처음 연결될 때의 문구가 그대로 굳어, 그 뒤
+  // updateBand() 가 상태를 바꿔도 클릭했을 때 옛날 설명이 떴다. 매번 그 시점의
+  // elm.title(항상 최신으로 갱신됨)을 직접 읽어 항상 지금 상태를 보여준다.
+  function _wireHoverTapExplain(elm) {
+    if (!elm || elm.dataset.explainWired) return;
+    elm.dataset.explainWired = "1";
+    elm.tabIndex = 0;
+    elm.setAttribute("role", "button");
+    const show = () => { const t = elm.title; if (t) toast(t); };
+    elm.addEventListener("click", show);
+    elm.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show(); }
+    });
+  }
 
   function updateBand() {
     const band = $("#band");
     const title = $("#band-title");
     if (!band || !title) return;
 
-    // 표시 순서: 국내주식 → 해외주식 → 암호화폐
+    // 표시 순서: 국내주식 → 해외주식 → 암호화폐 → 스윙
     const modeNames = { web: "관찰", sim: "시뮬레이션", paper: "모의매매", live: "실거래" };
     let state = "idle";
-    const icons = [];  // [{ emoji, dotState, text }]
+    const icons = [];  // [{ market, dotState, text }]
 
     const ds = _lastDomesticStatus;
     const snap = _lastStockSnap;
     const domesticRunning = ds ? !!ds.running : !!snap;
     const mode = (snap && snap.mode) || (ds && ds.mode) || "";
     const modeLabel = MODE_LABELS[mode] || modeNames[mode] || mode;
+    let domesticHasStatus = false;
     if (ds || snap) {
+      domesticHasStatus = true;
       let dState = "off";
       let text;
       if (!domesticRunning) {
@@ -2432,7 +2479,7 @@
         // ★ 해외·암호화폐와 같은 표현("모의매매 중")으로 - 국내만 "모드"라고 다르게 쓰고 있었다.
         text = `국내주식: ${modeLabel} 중`;
       }
-      icons.push({ emoji: "🇰🇷", dotState: dState, text });
+      icons.push({ market: "domestic", dotState: dState, text });
     }
 
     if (_lastOverseasStatus) {
@@ -2440,7 +2487,7 @@
       const label = modeNames[os.mode] || (os.is_live ? "실거래" : "모의매매");
       const dState = os.running ? (os.mode || (os.is_live ? "live" : "paper")) : "off";
       const text = os.running ? `해외주식: ${label} 중` : `해외주식: 꺼짐 (${label})`;
-      icons.push({ emoji: "🌍", dotState: dState, text });
+      icons.push({ market: "overseas", dotState: dState, text });
     }
 
     if (_lastCryptoStatus) {
@@ -2448,7 +2495,7 @@
       const label = modeNames[cs.mode] || (cs.is_live ? "실거래" : "모의매매");
       const dState = cs.running ? (cs.mode || (cs.is_live ? "live" : "paper")) : "off";
       const text = cs.running ? `암호화폐: ${label} 중` : `암호화폐: 꺼짐 (${label})`;
-      icons.push({ emoji: "🪙", dotState: dState, text });
+      icons.push({ market: "crypto", dotState: dState, text });
     }
 
     if (_lastSwingStatus) {
@@ -2456,7 +2503,7 @@
       const label = modeNames[ss.mode] || (ss.is_live ? "실거래" : "모의매매");
       const dState = ss.running ? (ss.mode || (ss.is_live ? "live" : "paper")) : "off";
       const text = ss.running ? `스윙: ${label} 중` : `스윙: 꺼짐 (${label})`;
-      icons.push({ emoji: "📈", dotState: dState, text });
+      icons.push({ market: "swing", dotState: dState, text });
     }
 
     band.dataset.state = state;
@@ -2467,9 +2514,19 @@
     const sideBadge = $("#sidebar-mode-badge");
     if (sideBadge) {
       sideBadge.dataset.state = state;
-      const label = STATE_LABEL_KO[state] || state;
+      // ★★★ "좌측상단 메뉴에 대기는 뭘 의미하는거야?" - 상태를 아직 못 받아왔을 때(대기)와
+      // 국내주식을 일부러 꺼 둔 경우(자동매매 꺼짐)를 구분한다. 접힌(레일) 사이드바에서도
+      // title·클릭 설명은 그대로 동작한다(라벨 글자만 CSS 로 숨긴다).
+      const label = domesticHasStatus ? (STATE_LABEL_KO[state] || state) : "연결 확인 중";
+      const help = domesticHasStatus
+        ? (STATE_HELP_KO[state] || "")
+        : "서버와 연결을 확인하는 중입니다. 잠시 후 국내주식 자동매매 상태가 표시됩니다.";
       const labelEl = sideBadge.querySelector(".sidebar-mode-badge-label");
       if (labelEl) labelEl.textContent = label; else sideBadge.textContent = label;
+      const fullExplain = label + " - " + help;
+      sideBadge.title = fullExplain;
+      sideBadge.setAttribute("aria-label", "자동매매 상태: " + fullExplain);
+      _wireHoverTapExplain(sideBadge);
     }
 
     title.innerHTML = "";
@@ -2477,11 +2534,14 @@
       title.textContent = "연결 중...";
       return;
     }
-    icons.forEach(({ emoji, dotState, text }) => {
-      title.appendChild(el("span", {
-        class: "band-icon", "data-state": dotState, title: text, text: emoji,
-        onclick: () => toast(text),
-      }));
+    icons.forEach(({ market, dotState, text }) => {
+      const iconEl = el("span", {
+        class: "band-icon", "data-state": dotState, title: text,
+        "aria-label": text,
+        html: icon(MARKET_TAB_ICON[market]),
+      });
+      _wireHoverTapExplain(iconEl);
+      title.appendChild(iconEl);
     });
   }
 
@@ -2948,9 +3008,7 @@
     if (!root) return;
     if (!_selSeg || !root.contains(_selSeg)) {
       root.innerHTML = "";
-      const head = el("div", { class: "page-head" });
-      head.appendChild(el("h1", { html: _selIcon("target") + " 종목 선정" }));
-      root.appendChild(head);
+      // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다(대시보드와 동일한 이유).
       _selSeg = renderMarketFilterSeg(_selectionMarketFilter, (key) => {
         _selectionMarketFilter = key;
         renderSelection(_selectionData);
@@ -3505,9 +3563,7 @@
   async function renderPerf(domesticData, group) {
     const panel = $('.panel[data-panel="perf"]');
     panel.innerHTML = "";
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: _perfIcon("chart") + " 성과" }));
-    panel.appendChild(head);
+    // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다.
     const f = _perfMarketFilter;
     const filterRow = el("div", { class: "filter-row" });
     filterRow.appendChild(renderMarketFilterSeg(f, (key) => {
@@ -3758,9 +3814,7 @@
     const panel = $('.panel[data-panel="journal"]');
     const f = _journalMarketFilter;
     panel.innerHTML = "";
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: (window.UI && window.UI.icon ? window.UI.icon("book") : "") + " 매매일지" }));
-    panel.appendChild(head);
+    // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다.
     const filterRow = el("div", { class: "filter-row" });
     filterRow.appendChild(renderMarketFilterSeg(f, (key) => {
       _journalMarketFilter = key;
@@ -3918,21 +3972,22 @@
   async function loadMarketReviews() {
     const panel = $('.panel[data-panel="marketreview"]');
     panel.innerHTML = "";
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: _mrevIcon("globe") + " 시장 평가" }));
-    panel.appendChild(head);
+    // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다.
     const filterRow = el("div", { class: "filter-row" });
     const seg = el("div", { class: "seg" });
-    [["all", "🔀 전체"], ["domestic", "🇰🇷 국내"], ["overseas", "🌍 해외"]].forEach(([key, label]) => {
-      seg.appendChild(el("button", {
-        text: label, class: key === _marketReviewFilter ? "active" : "",
+    [["all", "layers", "전체"], ["domestic", "building", "국내"], ["overseas", "globe", "해외"]].forEach(([key, iconName, label]) => {
+      const btn = el("button", {
+        class: key === _marketReviewFilter ? "active" : "",
         onclick: (e) => {
           $$("button", seg).forEach((b) => b.classList.remove("active"));
-          e.target.classList.add("active");
+          e.currentTarget.classList.add("active");
           _marketReviewFilter = key;
           loadMarketReviews();
         },
-      }));
+      });
+      btn.insertAdjacentHTML("beforeend", `<span class="seg-icon" aria-hidden="true">${_mrevIcon(iconName)}</span>`);
+      btn.appendChild(el("span", { text: label }));
+      seg.appendChild(btn);
     });
     filterRow.appendChild(seg);
     panel.appendChild(filterRow);
@@ -5725,6 +5780,25 @@
       (byGroup[g] || (byGroup[g] = [])).push(section);
     });
 
+    // ★ f.showIf = { path, equals } 인 필드를, 그 path 의 체크박스 값에 맞춰
+    // 보이거나 숨긴다(값이 바뀔 때도 즉시 반영). 조건 필드가 같은 섹션 안에
+    // 없으면(다른 카드에 있으면) 아무것도 하지 않는다 - 지금은 exit.allow_overnight
+    // 하나만 쓰지만, 스키마에 showIf 만 추가하면 다른 bool 필드에도 그대로 쓸 수 있다.
+    function _wireShowIf(builtNodes) {
+      builtNodes.forEach(({ f, node }) => {
+        if (!f.showIf) return;
+        const ctrl = builtNodes.find((x) => x.f.path === f.showIf.path);
+        const ctrlInput = ctrl && ctrl.node.querySelector('[data-path="' + f.showIf.path + '"]');
+        if (!ctrlInput) return;
+        const apply = () => {
+          const show = f.showIf.equals === undefined ? !!ctrlInput.checked : ctrlInput.checked === f.showIf.equals;
+          node.style.display = show ? "" : "none";
+        };
+        ctrlInput.addEventListener("change", apply);
+        apply();
+      });
+    }
+
     function renderSectionCard(section) {
       const sectionEl = el("section", { class: "card" });
       // ★★★ 섹션 설명(note)도 제목 호버로 - 섹션마다 한 줄씩 깔리면
@@ -5746,6 +5820,13 @@
         $$("input, select, textarea, button", node).forEach((el2) => { el2.disabled = true; });
       }
 
+      // ★★★ "allow_overnight 를 끄면 그 아래 세부 조건들은 의미가 없으니
+      // 숨기거나 비활성화해 달라" - showIf 를 쓰는 필드(스키마의 f.showIf =
+      // { path, equals })는 여기서 만든 노드를 모아 뒀다가 아래 _wireShowIf() 에서
+      // 그 조건 필드(체크박스)의 값·변경에 맞춰 보이거나 숨긴다. 범용으로 짜서
+      // 다른 섹션의 다른 bool 필드도 같은 방식으로 재사용할 수 있다.
+      const builtNodes = [];
+
       const autoFields = [];
       section.fields.forEach((f) => {
         const tier = fieldTier(f.path);
@@ -5754,6 +5835,7 @@
         const lab = node.querySelector("label");
         if (lab) lab.insertAdjacentElement("afterbegin", el("span", { class: "tier-badge " + tier, text: tier === "required" ? "필수" : "선택" }));
         _applyFieldLock(node, f);
+        builtNodes.push({ f, node });
         sectionEl.appendChild(node);
       });
       if (autoFields.length) {
@@ -5769,10 +5851,13 @@
           const lab = node.querySelector("label");
           if (lab) lab.insertAdjacentElement("afterbegin", el("span", { class: "tier-badge auto", text: "자동" }));
           _applyFieldLock(node, f);
+          builtNodes.push({ f, node });
           det.appendChild(node);
         });
         sectionEl.appendChild(det);
       }
+
+      _wireShowIf(builtNodes);
 
       // ★★★ "설정에서 거래선택시 현재 매매중이 아닌 건 선택할 수 있어야 한다" - 이제
       // 필드 하나하나를 그 필드가 속한 시장이 거래 중일 때만 잠근다(위 KEY_MARKET 참고).
@@ -5960,8 +6045,9 @@
   async function renderNews() {
     const panel = $('.panel[data-panel="news"]');
     panel.innerHTML = "";
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: _newsIcon("newspaper") + " 속보" }));
+    // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다 - .page-head 는 새로고침
+    // 버튼만 오른쪽 끝에 놓는 용도로 남긴다(justify-content 를 flex-end 로).
+    const head = el("div", { class: "page-head", style: { justifyContent: "flex-end" } });
     const refreshBtn = el("button", {
       class: "b ghost small", html: `${_newsIcon("refresh")} 새로고침`,
       onclick: async () => {
@@ -6132,10 +6218,7 @@
     // 조건에 따라 통째로 바뀌기 때문) - 문서 전체 스크롤을 보존한다.
     const _scrollEl = _scrollAnchorEl();
     const _savedTop = _scrollEl.scrollTop;
-    panel.innerHTML = "";
-    const head = el("div", { class: "page-head" });
-    head.appendChild(el("h1", { html: _marketIcon("globe") + " 시장" }));
-    panel.appendChild(head);
+    // ★ 상단바 제목과 중복되어 패널 안 h1 은 제거했다.
     // (data.note 는 긴 안내문이라 아래 기준 줄의 ⓘ 로 옮긴다)
 
     // ★★★ "일부 항목에 시간이 누락되어 있다" - 카드마다 각자 시각을

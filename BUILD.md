@@ -10,7 +10,7 @@ AutoDayTrading/
 ├── requirements-dev.txt          테스트에만 필요한 패키지 (httpx2·playwright)
 ├── config.yaml                    설정 (모드·자금·위험관리·기법·비용·시장별 설정 등)
 ├── themes.yaml                    테마 사전
-├── run.py                         CLI (개발·진단용: net/check/select/run/report/ui 등)
+├── run.py                         CLI (개발·진단용: net/check/select/run/report/ui/db-backup 등)
 ├── tray.py                        트레이 실행기 (exe 빌드 시 진입점)
 ├── build_exe.bat                   PyInstaller 빌드 스크립트 (cp949+CRLF)
 │
@@ -28,7 +28,7 @@ AutoDayTrading/
 │   ├── clock.py                      시계 (실시간/시뮬레이션/멈춤)
 │   ├── tossapi.py                     토스증권 Open API 클라이언트 (국내·해외 공용)
 │   ├── bithumb_api.py                 빗썸 Open API 2.0 클라이언트 (암호화폐 시세·주문)
-│   ├── orders.py                      주문 원장 (멱등성)
+│   ├── orders.py                      주문 원장 (멱등성, daytrader.db 의 order_intents 표)
 │   ├── broker.py                      PaperBroker/LiveBroker (국내주식)
 │   ├── overseas_broker.py             해외주식 브로커
 │   ├── bithumb_broker.py              빗썸 코인 매매 브로커
@@ -38,8 +38,11 @@ AutoDayTrading/
 │   ├── screener.py                    국내주식 종목 선정(테마 스크리닝)
 │   ├── us_themes.py                   미국 주식 테마 분류·자동 선정
 │   ├── sizing.py                      투자금액 배분·분할 매수/매도 (국내·해외·암호화폐 공통)
-│   ├── journal.py                     매매일지
-│   ├── ledger.py                      거래 원장·집계
+│   ├── db.py                          매매기록·로그 저장소(SQLite, state\daytrader.db) - 연결 관리·스키마·유지보수
+│   ├── db_import.py                   기존 JSONL/JSON 기록을 daytrader.db 로 1회성 가져오기(멱등·재개 가능)
+│   ├── applog.py                      WARNING 이상 애플리케이션 로그를 daytrader.db 의 app_log 표에도 남김
+│   ├── journal.py                     매매일지 (daytrader.db 의 journal 표)
+│   ├── ledger.py                      거래 원장·집계 (daytrader.db 의 trades/equity 표)
 │   ├── perf_stats.py                  해외주식·암호화폐 성과 통계(승률·손익비·기법별)
 │   ├── exit_efficiency.py             청산 효율 추적("더 기다렸으면 어땠을지")
 │   ├── engine.py                      국내주식 매매 엔진 (메인 루프)
@@ -83,6 +86,7 @@ AutoDayTrading/
     ├── test_offline.py               계산·설정·지표 등 기본 검증
     ├── test_live_safety.py           실거래 사고 시나리오 (가장 중요)
     ├── test_engine_loop.py           가짜 시장으로 국내주식 하루 전체 완주 검증
+    ├── test_db.py                    매매기록·로그 저장소(SQLite, daytrader/db.py) 검증
     ├── test_overseas_engine.py       해외주식 엔진 검증
     ├── test_crypto_engine.py         암호화폐(빗썸) 엔진 검증
     ├── test_crypto_playbook.py       (예전) 암호화폐 전용 기법(crypto_playbook.py) 검증

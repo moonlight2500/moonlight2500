@@ -95,6 +95,37 @@ def _section_exit(cfg, playbook) -> dict:
             "body": "서버 OCO 가 꺼져 있습니다. 프로그램 내부에서만 손절을 감시하므로, 프로그램이 멈추면 손절도 멈춥니다.",
         })
 
+    # ★★★ [9-1] "조건부 오버나이트" - allow_overnight 는 더 이상 "무조건
+    # 넘긴다"가 아니라 "이익 중인 포지션만, 최대 며칠까지" 넘기는 규칙이다.
+    # 숫자(기준 수익률 등)는 설정에서 그대로 읽어 문서가 설정과 어긋나지 않게 한다.
+    if cfg.exit.allow_overnight:
+        ex = cfg.exit
+        holiday_body = (
+            "주말·공휴일 앞 마지막 거래일에는 이익이 충분해도 넘기지 않습니다."
+            if ex.overnight_skip_before_holiday
+            else "휴장 전날에도(설정에서 꺼둠) 조건만 맞으면 넘깁니다."
+        )
+        stop_body = (
+            "넘기는 포지션은 손절선을 본전(평균 매수가+비용)으로 올리고 서버 OCO를 다시 겁니다. "
+            "재설정에 실패하면 안전을 위해 넘기지 않고 그 자리에서 청산합니다."
+            if ex.overnight_breakeven_stop
+            else "손절선은 원래 값 그대로 두고 수량만 넘깁니다(설정에서 본전 상향을 꺼둠)."
+        )
+        items.append({
+            "head": "조건부 오버나이트",
+            "body": (
+                f"장 마감 시점 평가손익이 비용을 뺀 뒤에도 {ex.overnight_min_profit_pct*100:.1f}% 이상인 "
+                f"포지션만 다음 거래일로 최대 {ex.overnight_max_days}일 넘깁니다. 기준에 못 미치는 포지션과 "
+                f"손실 중인 포지션은 그대로 당일 청산됩니다. {holiday_body} {stop_body} 넘긴 포지션은 다음 "
+                "장마감에 이익이 나도 무조건 정리합니다(다시 넘기지 않음)."
+            ),
+        })
+    else:
+        items.append({
+            "head": "오버나이트",
+            "body": "장 마감 전에 반드시 정리합니다(설정에서 꺼둠) - 포지션을 다음날로 넘기지 않습니다.",
+        })
+
     lead = f"현재 켜진 청산 기법은 {len(exits)}개(+장 마감 강제청산)입니다."
     return {"id": "exit", "title": "어떻게 파는가", "lead": lead, "items": items}
 
@@ -137,11 +168,17 @@ def _section_never(cfg) -> dict:
     items = [
         {"head": "물타기", "body": "손실 중인 포지션에 추가로 매수하지 않습니다."},
     ]
-    # ★★★ "오버나이트·장기 보유 허용" - cfg.exit.allow_overnight 에 따라 실제 동작이 다르므로
-    # (숫자를 문서에 적어두면 설정을 바꾼 순간부터 거짓말이 된다는 이 파일의 원칙과 같다)
-    # "절대 안 함" 목록에는 지금 설정대로만 넣는다. 꺼져 있을 때만 여기 남는다.
+    # ★★★ [9-1] "조건부 오버나이트" - cfg.exit.allow_overnight 에 따라 실제 동작이
+    # 다르므로(숫자를 문서에 적어두면 설정을 바꾼 순간부터 거짓말이 된다는 이 파일의
+    # 원칙과 같다) "절대 안 함" 목록에는 지금 설정대로만 넣는다.
     if not getattr(cfg.exit, "allow_overnight", False):
         items.append({"head": "오버나이트", "body": "장 마감 전에 반드시 정리합니다. 포지션을 다음날로 넘기지 않습니다."})
+    else:
+        items.append({
+            "head": "손실 중 오버나이트",
+            "body": f"손실 중이거나 이익이 {cfg.exit.overnight_min_profit_pct*100:.1f}% 미만인 포지션은 "
+                    "다음날로 넘기지 않습니다 - 이익 기준을 넘긴 포지션만 넘깁니다.",
+        })
     items += [
         {"head": "추격매수", "body": "이미 너무 오른 종목은 사지 않습니다."},
         {"head": "유의종목", "body": "정리매매·투자경고·투자위험·단기과열 종목은 애초에 후보에서 제외합니다."},
@@ -150,7 +187,10 @@ def _section_never(cfg) -> dict:
     ]
     lead = "다음은 어떤 상황에서도 하지 않습니다."
     if getattr(cfg.exit, "allow_overnight", False):
-        lead += " (오버나이트·장기 보유는 지금 설정에서 허용되어 있습니다 - 손절·트레일링·시간손절로만 관리합니다.)"
+        lead += (
+            " (조건부 오버나이트: 이익 중인 포지션만, 최대 "
+            f"{cfg.exit.overnight_max_days}일까지 다음 거래일로 넘깁니다 - 그 밖에는 그대로 당일 청산합니다.)"
+        )
     return {"id": "never", "title": "하지 않는 것", "lead": lead, "items": items}
 
 

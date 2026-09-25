@@ -1179,6 +1179,79 @@ def test_journal_shows_only_trades() -> None:
         config_mod.app_dir = orig_app_dir
 
 
+# ━━ 조건부 오버나이트 - 재시작(2일차) [9-1] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_restart_with_carried_position() -> None:
+    """(6) 오버나이트로 넘긴 포지션을 들고 재시작해도(2일차 아침) preflight 가
+    막지 않고, 시간손절이 개장하자마자 잘못 걸리지도 않는다.
+    ★★★ "재시작이 정상적인 사용법인데 넘긴 포지션 때문에 실거래를 아예 시작
+    못 하면" - preflight()가 보유 종목과 연결된 조건부 주문(서버 OCO)까지
+    고아로 오인해 차단하면 안 된다(이미 [1-2]로 고쳐짐 - 여기선 "오버나이트로
+    넘긴" 포지션 특유의 carry_date 가 있어도 여전히 통과하는지 함께 본다).
+    """
+    print("\n== 조건부 오버나이트: 2일차 재시작 - preflight 통과 · 시간손절 오탐 없음 ==")
+    from daytrader.broker import Position
+    from daytrader.ledger import Ledger
+    from daytrader.safety import preflight
+    from daytrader.timeutil import now_kst
+
+    with tempfile.TemporaryDirectory() as d:
+        cfg = _live_cfg()
+        cfg.state_dir = d
+        ledger = Ledger(d)
+
+        # 어제 오버나이트로 넘긴 포지션 - 재시작 시 daily_state.json 에서 그대로 복원된
+        # 상태를 흉내낸다(carry_date 가 어제 날짜로 찍혀 있고, 서버 OCO 는 재시작
+        # 시점에 [9-1]의 _rearm_carried_oco() 가 이미 오늘 날짜로 다시 걸어 뒀다고 본다).
+        pos = Position(
+            symbol="005930", name="삼성전자", theme="t", quantity=10, entry_price=70000,
+            entry_time=now_kst(), peak_price=73000, oco_id="oco-carried", entry_volume=0,
+            verdict_id="v", why="", technique="breakout", carry_date="2026-09-08",
+        )
+        positions = {"005930": pos}
+
+        client = FakeToss()
+        client.open_orders_data = []
+        client.conditional_orders_data = [
+            {"conditionalOrderId": "oco-carried", "status": "OPEN", "symbol": "005930"}
+        ]
+
+        result = preflight(cfg, client, ledger=ledger, positions=positions)
+        check(
+            "★오버나이트로 넘긴 포지션이 있어도 preflight 통과",
+            result["ok"], "; ".join(c["detail"] for c in result["blocking"]),
+        )
+
+        # 시간손절: 밤새 쉰 시간까지 그대로 더해진 held_minutes(예: 하루 가까이)로
+        # 개장 직후 평가해도, carry_date 가 있으면 시간손절 대상에서 빠져야 한다.
+        from types import SimpleNamespace
+        from daytrader.playbook import TimeStopExit
+
+        exit_ = TimeStopExit(cfg, cfg.strategy.p("time_stop"))
+        ctx = SimpleNamespace(held_minutes=1200.0, force_close=False, now=now_kst(), prev_verdict=None, cfg=cfg)
+        verdict = exit_.evaluate(pos, [], pos.peak_price, ctx)
+        check(
+            "★밤새 쉰 시간이 더해져도 시간손절이 걸리지 않음(다음 장마감에 정리됨)",
+            not verdict.ok, str(verdict.to_dict() if hasattr(verdict, "to_dict") else verdict),
+        )
+
+        # 대조군: carry_date 가 없는 보통 포지션이었다면 같은 held_minutes 에서
+        # (max_hold_minutes 를 넘겼다면) 정상적으로 시간손절이 걸려야 한다 - 이
+        # 예외가 "전부 다 끄는" 게 아니라 오버나이트 포지션에만 좁게 적용됨을 함께 본다.
+        pos_normal = Position(
+            symbol="000660", name="SK하이닉스", theme="t", quantity=10, entry_price=70000,
+            entry_time=now_kst(), peak_price=73000, oco_id=None, entry_volume=0,
+            verdict_id="v", why="", technique="breakout",
+        )
+        held_minutes = float(cfg.exit.max_hold_minutes) + 10
+        ctx_normal = SimpleNamespace(held_minutes=held_minutes, force_close=False, now=now_kst(), prev_verdict=None, cfg=cfg)
+        verdict_normal = exit_.evaluate(pos_normal, [], pos_normal.peak_price, ctx_normal)
+        check(
+            "일반 포지션은 max_hold_minutes 를 넘기면 그대로 시간손절이 걸림",
+            verdict_normal.ok, str(verdict_normal.to_dict() if hasattr(verdict_normal, "to_dict") else verdict_normal),
+        )
+
+
 def main() -> None:
     tests = [
         test_idempotency, test_oco_is_open, test_oco_cancel_fail, test_cash_zero_not_treated_as_missing, test_reconcile,
@@ -1188,7 +1261,7 @@ def main() -> None:
         test_account_holdings_splits_domestic_overseas_with_profit, test_crypto_account_holdings,
         test_account_holdings_survives_string_numbers, test_crypto_account_holdings_survives_string_ticker,
         test_overseas_status_exposes_auto_select_when_engine_off, test_overseas_ticker_uses_auto_selected_watchlist,
-        test_journal_shows_only_trades,
+        test_journal_shows_only_trades, test_restart_with_carried_position,
     ]
     for t in tests:
         t()

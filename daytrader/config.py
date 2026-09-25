@@ -198,7 +198,23 @@ class ExitCfg:
     # 국내 단타 포지션을 강제 청산하지 않고 다음 거래일로 넘긴다(engine.py 의 run() 참고).
     # 손절·트레일링·시간 손절 같은 다른 청산 기법은 그대로 계속 감시한다 - "무조건 오늘
     # 안에 판다"는 규칙만 빠진다.
+    # ★★★ "조건부 오버나이트" - allow_overnight 는 더 이상 무조건 넘기는 스위치가
+    # 아니라 "이익 중인 포지션만, 최대 며칠까지" 넘기는 규칙의 총 스위치다(engine.py
+    # Engine._settle_overnight 참고). 아래 overnight_* 값들이 그 세부 조건이다.
     allow_overnight: bool = True
+    # 장마감 시점 평가손익이 왕복비용을 뺀 뒤에도 이 비율 이상 이익이어야 넘긴다. 못
+    # 미치면(또는 손실이면) 오늘 안에 판다. 0이면 "본전만 넘으면" 넘기는 셈이다.
+    overnight_min_profit_pct: float = 0.02
+    # 한 번 넘긴 포지션을 다시 넘길 수 있는 최대 일수. 지금은 1일만 지원한다 - 연속
+    # 오버나이트가 하루를 넘어가면 데이트레이딩이 아니라 스윙이 된다(그건 swing 엔진의 몫).
+    overnight_max_days: int = 1
+    # 주말·공휴일 앞 마지막 거래일에는 넘기지 않는다(session.py 의 다음 거래일 판정을
+    # 쓴다) - 쉬는 날 동안 뉴스·급락에 그대로 노출되는 기간을 최소화한다.
+    overnight_skip_before_holiday: bool = True
+    # 넘기기로 한 포지션은 손절선을 평균 매수가(본전, 비용 포함) 위로 올리고 서버
+    # OCO 를 그 값으로 다시 건다 - "이익 중이던 포지션이 다음날 손실로 마감되는" 최악을
+    # 막는다. 끄면 손절선은 원래 값 그대로 두고 수량만 넘긴다.
+    overnight_breakeven_stop: bool = True
 
 
 @dataclass
@@ -1031,6 +1047,22 @@ def validate(cfg: Config) -> None:
             f" {_end_h:02d}:{_end_m:02d}에 끝나 15:20 단일가(종가) 매매 시작 전(15:19까지)에"
             " 강제청산을 마치지 못합니다. force_close_time 을 앞당기거나"
             " force_close_deadline_min 을 줄이세요."
+        )
+
+    # ★★★ "조건부 오버나이트" 세부값 검증.
+    for _bf, _bn in (
+        (cfg.exit.allow_overnight, "exit.allow_overnight"),
+        (cfg.exit.overnight_skip_before_holiday, "exit.overnight_skip_before_holiday"),
+        (cfg.exit.overnight_breakeven_stop, "exit.overnight_breakeven_stop"),
+    ):
+        if not isinstance(_bf, bool):
+            raise ValueError(f"{_bn} 은 true/false 여야 합니다.")
+    if not (0 <= cfg.exit.overnight_min_profit_pct <= 0.5):
+        raise ValueError("exit.overnight_min_profit_pct 는 0~0.5 사이여야 합니다.")
+    if cfg.exit.overnight_max_days != 1:
+        raise ValueError(
+            "exit.overnight_max_days 는 지금은 1만 지원합니다 - 하루를 넘는 연속 보유는 "
+            "데이트레이딩이 아니라 스윙 매매의 영역이라 이 엔진에서는 아직 지원하지 않습니다."
         )
 
     if not (1 <= cfg.live.degrade_after_failures <= 20):

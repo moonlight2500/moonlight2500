@@ -924,6 +924,209 @@ def test_max_positions_enforced_across_scored_candidates() -> None:
         )
 
 
+# ━━ 조건부 오버나이트 [9-1] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class _FakeOvernightBroker:
+    """place_oco()/cancel_oco()/sell() 호출을 기록하는 가짜 브로커.
+    손절선 재설정(본전 계산)과 재설정 실패 시 안전 청산을 검증하는 데 쓴다."""
+
+    def __init__(self, place_ok: bool = True):
+        self.place_ok = place_ok
+        self.cancelled: list = []
+        self.placed_cfgs: list = []
+        self.sell_calls: list = []
+        self._seq = 0
+
+    def cancel_oco(self, oco_id):
+        self.cancelled.append(oco_id)
+        return True
+
+    def oco_is_open(self, oco_id):
+        return False
+
+    def place_oco(self, pos, cfg):
+        self.placed_cfgs.append(cfg)
+        if not self.place_ok:
+            return None
+        self._seq += 1
+        return f"new-oco-{self._seq}"
+
+    def sell(self, symbol, quantity, ref_price, *, urgent=False, reason="", verdict_id=None):
+        from daytrader.broker import Fill
+        self.sell_calls.append((symbol, quantity, ref_price))
+        return Fill(
+            ok=True, symbol=symbol, side="SELL", quantity=quantity, price=ref_price,
+            order_id=f"sell-{len(self.sell_calls)}", reason=reason, fatal=False, price_estimated=False,
+        )
+
+    def cash(self):
+        return 10_000_000
+
+
+def _overnight_setup(day: str, at: str = "15:12", entry: float = 70000.0, place_ok: bool = True):
+    """오버나이트 판단 테스트 공통 준비물 - (engine, tmpdir, symbol, pos, broker) 를 돌려준다."""
+    from daytrader.broker import Position
+    from daytrader.clock import SimClock
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.simulator import SimClient
+    from daytrader.timeutil import now_kst
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "sim"
+    d = tempfile.mkdtemp()
+    cfg.state_dir = d
+    clock = SimClock(start=at, speed=1, day=day)
+    eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
+
+    symbol = "005930"
+    pos = Position(
+        symbol=symbol, name="삼성전자", theme="t", quantity=10, entry_price=entry,
+        entry_time=now_kst(), peak_price=entry, oco_id="old-oco", entry_volume=0,
+        verdict_id=None, why="", technique="breakout",
+    )
+    eng.state.positions[symbol] = pos
+    broker = _FakeOvernightBroker(place_ok=place_ok)
+    eng.broker = broker
+    return eng, d, symbol, pos, broker
+
+
+def test_overnight_carry_profitable_position() -> None:
+    """(1) 비용을 뺀 뒤에도 기준(2%) 이상 이익이면 연장하고, 손절선을 본전으로 올려
+    서버 OCO 를 다시 건다."""
+    print("\n== 조건부 오버나이트: 이익 기준을 넘으면 1일 연장, 손절선을 본전으로 ==")
+    from daytrader.ticks import breakeven_pct, round_to_tick
+    from daytrader.timeutil import day_str
+
+    # 2026-09-08 은 화요일 - 휴장 전날 규칙에 안 걸리는 평일을 고른다.
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-08", entry=70000.0, place_ok=True)
+    last = pos.entry_price * 1.05  # +5% - 비용을 빼도 기준(2%)을 넉넉히 넘는다.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("★포지션이 청산되지 않고 남아있음", symbol in eng.state.positions)
+    if symbol in eng.state.positions:
+        kept = eng.state.positions[symbol]
+        check("★carry_date 가 오늘로 찍힘", kept.carry_date == day_str(eng.clock.now()), str(kept.carry_date))
+        check("새 OCO 로 바뀜", kept.oco_id == "new-oco-1", str(kept.oco_id))
+    check("기존 OCO 를 취소함", broker.cancelled == ["old-oco"], str(broker.cancelled))
+    check("매도는 하지 않음(연장이므로)", broker.sell_calls == [])
+
+    be_price = round_to_tick(
+        pos.entry_price * (1 + breakeven_pct(eng.cfg.costs.commission_pct, eng.cfg.costs.tax_pct)), "up",
+    )
+    check("새 OCO 를 1건 등록함", len(broker.placed_cfgs) == 1)
+    if broker.placed_cfgs:
+        placed_stop = round_to_tick(pos.entry_price * (1 - broker.placed_cfgs[-1].risk.stop_loss_pct), "up")
+        check("★손절선이 정확히 본전가로 올라감", placed_stop == be_price, f"{placed_stop} vs {be_price}")
+
+    rows = eng.journal.read(kinds=["overnight"])
+    check(
+        "일지에 '1일 보유 연장' 과 본전가 문구가 남음",
+        any("1일 보유 연장" in r["explain"] and "손절선을 본전" in r["explain"] for r in rows),
+        str(rows),
+    )
+
+
+def test_overnight_reject_low_profit() -> None:
+    """(2) 이익이 기준(2%) 미달이면 그날 안에 청산한다."""
+    print("\n== 조건부 오버나이트: 이익이 기준 미달이면 당일 청산 ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-08", entry=70000.0)
+    last = pos.entry_price * 1.005  # 총수익 0.5% - 비용을 빼면 더 낮아져 기준(2%) 미달.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("★포지션이 청산됨(연장 안 됨)", symbol not in eng.state.positions)
+    check("매도를 실행함", len(broker.sell_calls) == 1)
+    check("거래 기록이 남음", len(eng.state.closed) == 1)
+    if eng.state.closed:
+        reason = eng.state.closed[-1]["reason"]
+        check("★사유에 '기준' 미달 문구가 담김", "기준" in reason and "장마감 청산" in reason, reason)
+
+
+def test_overnight_skip_before_holiday() -> None:
+    """(3) 휴장(주말) 전날이면 이익이 충분해도 연장하지 않는다."""
+    print("\n== 조건부 오버나이트: 휴장 전날이면 이익이 있어도 연장 안 함 ==")
+    # 2026-09-04 는 금요일 - 다음 거래일이 내일(토요일)이 아니므로 휴장 전날이다.
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-04", entry=70000.0)
+    last = pos.entry_price * 1.05  # 이익은 기준을 넉넉히 넘긴다.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("★이익이 있어도 청산됨(휴장 전날)", symbol not in eng.state.positions)
+    if eng.state.closed:
+        reason = eng.state.closed[-1]["reason"]
+        check("★사유에 '휴장 전날' 문구가 담김", "휴장 전날이라 보유 연장 안 함" == reason, reason)
+
+
+def test_overnight_carried_position_force_closes_next_day() -> None:
+    """(4) 이미 한 번 넘긴 포지션은 다음 장마감에 이익이 나도 무조건 청산한다
+    (exit.overnight_max_days=1)."""
+    print("\n== 조건부 오버나이트: 이미 연장한 포지션은 다음 장마감에 무조건 청산 ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-09", entry=70000.0)
+    pos.carry_date = "2026-09-08"  # 어제 이미 한 번 연장했다.
+    last = pos.entry_price * 1.05  # 여전히 이익 중이어도 상관없다.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("★이익 중이어도 청산됨(연장 1일 한도)", symbol not in eng.state.positions)
+    check("다시 연장하려 하지 않음(OCO 재설정 시도 없음)", broker.placed_cfgs == [])
+    if eng.state.closed:
+        reason = eng.state.closed[-1]["reason"]
+        check("★사유에 '보유 연장 1일 경과' 문구가 담김", "보유 연장 1일 경과" in reason, reason)
+
+
+def test_overnight_oco_replace_failure_closes_instead_of_carrying() -> None:
+    """(5) 손절선 재설정(OCO 교체)에 실패하면 안전을 위해 연장하지 않고 청산한다."""
+    print("\n== 조건부 오버나이트: OCO 재설정 실패 시 연장하지 않고 청산(안전 우선) ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-08", entry=70000.0, place_ok=False)
+    last = pos.entry_price * 1.05  # 이익 기준은 넘지만 OCO 재설정이 실패한다.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("기존 OCO 취소를 시도함", broker.cancelled == ["old-oco"])
+    check("새 OCO 등록을 시도했다가 실패함", len(broker.placed_cfgs) == 1)
+    check("★연장하지 않고 청산됨(안전 우선)", symbol not in eng.state.positions)
+    check("매도를 실행함", len(broker.sell_calls) == 1)
+    rows = eng.journal.read(kinds=["halt"])
+    check("일지에 재설정 실패 경고가 남음", any("재설정 실패" in r["explain"] for r in rows), str(rows))
+
+
+def test_overnight_rearm_failure_sends_alert() -> None:
+    """다음 날 개장 때 넘긴 포지션의 서버 OCO 재등록이 실패하면 일지뿐 아니라 알림도 보낸다."""
+    print("\n== 조건부 오버나이트: 다음 날 OCO 재등록 실패 시 알림 전송 ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-09", at="09:01", entry=70000.0, place_ok=False)
+    pos.carry_date = "2026-09-08"
+    eng.cfg.exit.use_conditional_oco = True
+    sent = []
+    eng.notifier.send = lambda text, event=None, force=False: sent.append(text)
+
+    eng._rearm_carried_oco()
+
+    rows = eng.journal.read(kinds=["halt"])
+    check("일지에 재등록 실패가 남음", any("재등록에 실패" in r["explain"] for r in rows), str(rows))
+    check("★알림이 전송됨", any("재등록에 실패" in t for t in sent), str(sent))
+
+
+def test_overnight_disabled_closes_everything() -> None:
+    """(7) allow_overnight 가 꺼져 있으면 이익과 무관하게 예전처럼 전부 당일 청산한다."""
+    print("\n== 조건부 오버나이트: allow_overnight 꺼지면 전부 당일 청산(예전 방식) ==")
+    eng, d, symbol, pos, broker = _overnight_setup("2026-09-08", entry=70000.0)
+    eng.cfg.exit.allow_overnight = False
+    last = pos.entry_price * 1.05  # 이익이 충분해도 소용없다.
+    eng.client.prices = lambda symbols: [{"symbol": symbol, "price": last}]
+
+    eng._settle_overnight(eng.clock.now())
+
+    check("★allow_overnight 꺼지면 이익과 무관하게 청산됨", symbol not in eng.state.positions)
+    check("연장을 시도하지 않음(OCO 재설정 없음)", broker.placed_cfgs == [])
+
+
 def main() -> None:
     tests = [
         test_full_day, test_consecutive_loss_halt, test_daily_trade_limit,
@@ -933,6 +1136,10 @@ def main() -> None:
         test_pnl_curve_includes_held_positions, test_symbol_curves_sum_to_total, test_rescreen_info_tells_next_time,
         test_max_positions_enforced_across_scored_candidates, test_daily_loss_limit_includes_unrealized,
         test_close_position_survives_oco_just_filled_race,
+        test_overnight_carry_profitable_position, test_overnight_reject_low_profit,
+        test_overnight_skip_before_holiday, test_overnight_carried_position_force_closes_next_day,
+        test_overnight_oco_replace_failure_closes_instead_of_carrying, test_overnight_rearm_failure_sends_alert,
+        test_overnight_disabled_closes_everything,
     ]
     for t in tests:
         t()

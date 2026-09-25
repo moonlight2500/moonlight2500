@@ -13,6 +13,8 @@ import os
 import uuid
 from datetime import datetime
 
+from daytrader import db
+
 # ★ 표본이 작으면 제안하지 않는다. 근거 없는 제안보다 판단 보류가 낫다.
 MIN_TRADES_TECHNIQUE = 12  # 기법 하나를 판단하는 데 필요한 거래 수
 MIN_TRADES_MONTH = 20  # 월 전체 제안을 시작하는 최소 거래 수
@@ -400,34 +402,36 @@ def house_ideas(stats: dict) -> list:
 # ━━ 반영 이력 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class OptimizeHistory:
+    """복기 반영 이력. SQLite(daytrader.db)의 optimize_history 표에 담는다
+    (db.py 상단 "왜 SQLite 인가" 참고 - 예전엔 optimize_history.jsonl 한 줄씩이었다)."""
+
     def __init__(self, state_dir: str):
-        self.path = os.path.join(state_dir, "optimize_history.jsonl")
+        self.state_dir = state_dir
+        os.makedirs(state_dir, exist_ok=True)
+        db.get_connection(state_dir)  # 스키마 준비 + 기존 optimize_history.jsonl 1회성 가져오기
 
     def append(self, entry: dict) -> None:
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        db.insert_json_row(self.state_dir, "optimize_history", {
+            "entry_id": entry.get("id"), "at": entry.get("at"),
+        }, entry)
 
     def read(self, limit: int = 200) -> list:
-        if not os.path.exists(self.path):
-            return []
-        rows = []
-        with open(self.path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    continue  # 깨진 줄은 건너뛴다.
-        return rows[-limit:]
+        conn = db.get_connection(self.state_dir)
+        if limit:
+            sql = "SELECT data FROM (SELECT id, data FROM optimize_history ORDER BY id DESC LIMIT ?) ORDER BY id ASC"
+            cur = conn.execute(sql, (limit,))
+        else:
+            cur = conn.execute("SELECT data FROM optimize_history ORDER BY id")
+        return db.load_data_rows(cur.fetchall())
 
     def find(self, entry_id: str):
-        for row in self.read(limit=100000):
-            if row.get("id") == entry_id:
-                return row
-        return None
+        conn = db.get_connection(self.state_dir)
+        row = conn.execute(
+            "SELECT data FROM optimize_history WHERE entry_id = ? ORDER BY id DESC LIMIT 1", (entry_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["data"])
 
 
 def new_id() -> str:

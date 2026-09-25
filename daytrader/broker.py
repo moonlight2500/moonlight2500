@@ -66,6 +66,11 @@ class Position:
     sold_qty: float = 0.0
     sold_value: float = 0.0
     conviction: float = 0.5  # 진입 시점 테마 근거의 크기(0~1) - 추가 매수·분할 매도 비율 조절에 쓴다
+    # ★ "조건부 오버나이트" - 이 포지션을 오버나이트로 넘기기로 정한 날짜(YYYY-MM-DD).
+    # None 이면 아직 넘긴 적 없다(오늘 장마감에 새로 판단 대상). 값이 있으면 이미 한 번
+    # 넘긴 것이라 exit.overnight_max_days(현재 1일)에 따라 다음 장마감에 무조건 정리한다.
+    # 재시작해도 알아야 하므로 상태 파일에 그대로 저장된다(DailyState.to_dict/_load 참고).
+    carry_date: str | None = None
 
     def held_minutes(self, now=None) -> float:
         return minutes_between(self.entry_time, now or now_kst())
@@ -81,6 +86,7 @@ class Position:
             "adds": self.adds, "last_fill_price": self.last_fill_price, "scaled_out": self.scaled_out,
             "invested": self.invested, "realized": self.realized,
             "sold_qty": self.sold_qty, "sold_value": self.sold_value, "conviction": self.conviction,
+            "carry_date": self.carry_date,
         }
 
 
