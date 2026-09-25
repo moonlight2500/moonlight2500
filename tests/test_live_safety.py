@@ -414,6 +414,55 @@ def test_preflight() -> None:
         client_open_order.open_orders_data = [{"orderId": "1", "clientOrderId": "x"}]
         check("★미체결주문 차단", not preflight(cfg, client_open_order, ledger=ledger)["ok"])
 
+        # ★★★ 실제로 겪은 버그 - 보유 종목이 있는 상태로 재시작(정상적인
+        # 사용법 - allow_overnight 기본값 True)하면 그 종목의 서버 OCO 가
+        # 미체결로 남아 있는 게 당연한데, 예전엔 "미체결 주문이 하나라도
+        # 있으면 무조건 차단"이라 실거래를 아예 시작할 수 없었다. 지금 보유
+        # 중인 종목의 주문·조건부 주문은 통과시키고, 그 종목과 무관한(고아)
+        # 것만 막아야 한다.
+        from daytrader.broker import Position
+        from daytrader.timeutil import now_kst
+
+        held_positions = {
+            "005930": Position(
+                symbol="005930", name="삼성전자", theme="t", quantity=10, entry_price=70000,
+                entry_time=now_kst(), peak_price=70000, oco_id="oco-held", entry_volume=0,
+                verdict_id="v", why="", technique="fixed",
+            )
+        }
+
+        client_own_position_order = FakeToss()
+        client_own_position_order.open_orders_data = [{"orderId": "1", "clientOrderId": "x", "symbol": "005930"}]
+        client_own_position_order.conditional_orders_data = [
+            {"conditionalOrderId": "oco-held", "status": "OPEN", "symbol": "005930"}
+        ]
+        result_held = preflight(cfg, client_own_position_order, ledger=ledger, positions=held_positions)
+        check(
+            "★보유 중인 종목과 연결된 미체결 주문·조건부 주문은 재시작을 막지 않음",
+            result_held["ok"], "; ".join(c["detail"] for c in result_held["blocking"]),
+        )
+
+        client_orphan_order = FakeToss()
+        client_orphan_order.open_orders_data = [{"orderId": "2", "clientOrderId": "y", "symbol": "000660"}]
+        client_orphan_order.conditional_orders_data = [
+            {"conditionalOrderId": "oco-held", "status": "OPEN", "symbol": "005930"}
+        ]
+        result_orphan = preflight(cfg, client_orphan_order, ledger=ledger, positions=held_positions)
+        check(
+            "보유 종목과 무관한(고아) 미체결 주문은 여전히 차단",
+            not result_orphan["ok"], "; ".join(c["detail"] for c in result_orphan["blocking"]),
+        )
+
+        client_orphan_cond = FakeToss()
+        client_orphan_cond.conditional_orders_data = [
+            {"conditionalOrderId": "oco-unknown", "status": "OPEN", "symbol": "035420"}
+        ]
+        result_orphan_cond = preflight(cfg, client_orphan_cond, ledger=ledger, positions=held_positions)
+        check(
+            "보유 종목과 무관한(고아) 조건부 주문은 여전히 차단",
+            not result_orphan_cond["ok"], "; ".join(c["detail"] for c in result_orphan_cond["blocking"]),
+        )
+
         client_no_cash = FakeToss()
         client_no_cash.cash = 0
         check("★잔고부족 차단", not preflight(cfg, client_no_cash, ledger=ledger)["ok"])

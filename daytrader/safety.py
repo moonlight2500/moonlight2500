@@ -57,10 +57,20 @@ _CHECK_API = {
 
 # ━━ 사전 점검 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def preflight(cfg, client, ledger=None) -> dict:
-    """실매매 시작 전 항목을 순서대로 점검한다. 하나라도 block 이면 시작할 수 없다."""
+def preflight(cfg, client, ledger=None, positions=None) -> dict:
+    """실매매 시작 전 항목을 순서대로 점검한다. 하나라도 block 이면 시작할 수 없다.
+    ★★★ 실제로 겪은 버그 - 8)·9) 는 미체결 주문이 "하나라도" 있으면 무조건
+    막았다. 그런데 재시작은 정상적인 사용법이다 - 이미 포지션을 보유한 채로
+    재시작하면 그 포지션의 서버 OCO(조건부 주문)가 미체결 상태로 남아 있는 게
+    당연한데(특히 allow_overnight=True 기본값), 그 정상 상태 때문에 실거래를
+    아예 시작할 수 없었다. positions(엔진이 들고 있는 종목별 Position, 이미
+    __init__ 에서 daily_state.json 을 읽어 둔 것)를 받아 "지금 보유 중인
+    종목과 연결된" 주문은 통과시키고, 그 종목과 무관한(고아) 주문만 막는다.
+    """
     checks: list[Check] = []
     account_seq = None
+    tracked_symbols = set((positions or {}).keys())
+    tracked_oco_ids = {p.oco_id for p in (positions or {}).values() if getattr(p, "oco_id", None)}
 
     # 1) credentials - 토큰 발급 성공
     try:
@@ -160,21 +170,24 @@ def preflight(cfg, client, ledger=None) -> dict:
     except Exception as exc:
         checks.append(Check("existing_holdings", "기존 보유 종목", False, "warn", f"보유 종목 조회에 실패했습니다: {exc}"))
 
-    # 8) open_orders - 미체결 주문 있으면 차단
+    # 8) open_orders - 우리가 보유 중인 종목과 무관한(고아) 미체결 주문이 있으면 차단
     try:
         open_orders = client.get_orders(status="OPEN")
         rows = open_orders if isinstance(open_orders, list) else open_orders.get("orders", [])
         ours = [o for o in rows if is_ours(o.get("clientOrderId", ""))]
-        ok = len(rows) == 0
+        orphans = [o for o in rows if o.get("symbol") not in tracked_symbols]
+        ok = len(orphans) == 0
         checks.append(Check(
             "open_orders", "미체결 주문", ok, "block",
-            "미체결 주문이 없습니다." if ok
-            else f"미체결 주문 {len(rows)}건(이 중 우리 것 {len(ours)}건)이 있어 시작할 수 없습니다.",
+            "미체결 주문이 없습니다." if ok and not rows
+            else "보유 중인 종목의 주문뿐입니다." if ok
+            else f"미체결 주문 {len(rows)}건 중 보유 종목과 무관한 {len(orphans)}건"
+                 f"(전체 중 우리 것 {len(ours)}건)이 있어 시작할 수 없습니다.",
         ))
     except Exception as exc:
         checks.append(Check("open_orders", "미체결 주문", False, "block", f"미체결 주문 조회에 실패했습니다: {exc}"))
 
-    # 9) conditional_orders - 미체결 조건부 주문 있으면 차단
+    # 9) conditional_orders - 우리가 보유 중인 종목과 무관한(고아) 조건부 주문이 있으면 차단
     try:
         # ★★★ 실제로 겪은 버그 - status 없이 부르면 API 자체가 실패해서,
         # "미체결 조건부 주문 조회 실패"로 이 block 체크가 부당하게
@@ -182,10 +195,16 @@ def preflight(cfg, client, ledger=None) -> dict:
         # 이 정확히 맞는다.
         cond = client.conditional_orders(status="OPEN")
         rows = cond if isinstance(cond, list) else cond.get("orders", [])
-        ok = len(rows) == 0
+        orphans = [
+            o for o in rows
+            if o.get("symbol") not in tracked_symbols and o.get("conditionalOrderId") not in tracked_oco_ids
+        ]
+        ok = len(orphans) == 0
         checks.append(Check(
             "conditional_orders", "미체결 조건부 주문", ok, "block",
-            "미체결 조건부 주문이 없습니다." if ok else f"미체결 조건부 주문 {len(rows)}건이 있어 시작할 수 없습니다.",
+            "미체결 조건부 주문이 없습니다." if ok and not rows
+            else "보유 중인 종목의 서버 손절/익절(OCO)뿐입니다." if ok
+            else f"미체결 조건부 주문 {len(rows)}건 중 보유 종목과 무관한 {len(orphans)}건이 있어 시작할 수 없습니다.",
         ))
     except Exception as exc:
         checks.append(Check("conditional_orders", "미체결 조건부 주문", False, "block", f"조건부 주문 조회에 실패했습니다: {exc}"))

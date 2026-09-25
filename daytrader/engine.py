@@ -1219,9 +1219,17 @@ class Engine:
     # ━━ preflight / reconcile (STAGE 13, daytrader/safety.py) ━━━━━━━━━━━
 
     def _preflight(self) -> bool:
-        """실거래 시작 전 계좌 상태를 먼저 확인한다 (원칙 6)."""
+        """실거래 시작 전 계좌 상태를 먼저 확인한다 (원칙 6).
+        ★★★ 실제로 겪은 버그 - 보유 종목이 있는 상태로 재시작(정상적인 사용법 -
+        allow_overnight 가 기본값 True)하면 그 종목의 서버 OCO 가 미체결로
+        남아 있는 게 당연한데, preflight() 의 8)·9) 번 검사가 "미체결 주문이
+        하나라도 있으면 무조건 차단"이라 실거래를 아예 시작할 수 없었다.
+        __init__ 에서 이미 daily_state.json 을 읽어 둔 self.state.positions 를
+        넘겨, 지금 보유 중인 종목과 연결된 주문은 통과시키고 그 외(고아
+        주문)만 차단하게 한다.
+        """
         from daytrader.safety import preflight
-        result = preflight(self.cfg, self.client, ledger=self.ledger)
+        result = preflight(self.cfg, self.client, ledger=self.ledger, positions=self.state.positions)
         for c in result["checks"]:
             self.journal.write(
                 "session", f"[사전점검] {c['label']}: {c['detail']}",
