@@ -116,15 +116,27 @@ def test_toss_actually_not_called_via_server_route() -> None:
         call_count["n"] += 1
         raise RuntimeError("키가 없는데 토스 클라이언트를 만들려 함 - 호출되면 안 된다")
 
+    # ★★ [5-2] 이 서버는 Host 검증(DNS 리바인딩 방어)과 로그인 벽을 둘 다 앞단에
+    # 두고 있다. TestClient 기본값(Host: testserver, client IP: testclient)은 둘
+    # 다 거절 대상이라 그대로 부르면 라우트에 닿기도 전에 400/401 이 난다 - 로컬
+    # 제어 통로(DAYTRADER_LOCAL_TOKEN + X-Local-Control, _is_local_control 참고)를
+    # loopback IP 로 흉내 내 실제 트레이가 서버를 부르는 경로와 같은 방식으로 통과한다.
+    local_token = "test-local-control-token"
+    orig_local_token = os.environ.get("DAYTRADER_LOCAL_TOKEN")
+    os.environ["DAYTRADER_LOCAL_TOKEN"] = local_token
     orig_get_client = server.get_client
     server.get_client = fake_get_client
     try:
-        client = TestClient(server.app)
-        r = client.get("/api/market?ttl=0")
-        check("응답 정상(200)", r.status_code == 200)
+        client = TestClient(server.app, base_url="http://127.0.0.1", client=("127.0.0.1", 51000))
+        r = client.get("/api/market?ttl=0", headers={"x-local-control": local_token})
+        check("응답 정상(200)", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
         check("★★★ 키 없으면 get_client() 호출 자체가 안 일어남", call_count["n"] == 0)
     finally:
         server.get_client = orig_get_client
+        if orig_local_token is None:
+            os.environ.pop("DAYTRADER_LOCAL_TOKEN", None)
+        else:
+            os.environ["DAYTRADER_LOCAL_TOKEN"] = orig_local_token
 
 
 def main() -> None:
