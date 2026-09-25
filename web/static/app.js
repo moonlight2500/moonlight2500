@@ -3863,6 +3863,28 @@
 
   // ━━ 매매 기법 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  // ★★★ "심플&모던, 이모지 대신 아이콘" - 재편 대상 패널(매매 기법·소개·매매원칙·
+  // 릴리즈노트·준비연결·테마·설정·월간 리뷰·실험실)에서 공통으로 쓰는 아이콘 헬퍼.
+  // window.UI.icon 은 병렬로 작업 중인 다른 코스가 ui.js 에 추가하는 함수라 아직 이
+  // 브랜치에는 없을 수 있다 - 없으면 조용히 빈 문자열을 돌려줘 레이아웃이 깨지지 않게 한다.
+  function _pcIcon(name) {
+    return (window.UI && typeof window.UI.icon === "function") ? window.UI.icon(name) : "";
+  }
+  // ★ 아이콘 + 텍스트를 함께 담은 노드를 만든다(el() 의 html/text 는 둘 중 하나만
+  // 되므로 직접 조립한다). attrs 는 el() 에 그대로 넘어가므로 onclick·class 등을
+  // 평소처럼 쓸 수 있다 - 버튼·h2·span 어디에나 같은 함수를 쓴다.
+  function _pcIconEl(tag, iconName, text, attrs) {
+    attrs = Object.assign({}, attrs);
+    attrs.style = Object.assign({ display: "inline-flex", alignItems: "center", gap: "6px" }, attrs.style || {});
+    delete attrs.text;
+    delete attrs.html;
+    const node = el(tag, attrs);
+    const ic = _pcIcon(iconName);
+    if (ic) node.insertAdjacentHTML("beforeend", `<span class="icon" aria-hidden="true">${ic}</span>`);
+    node.appendChild(el("span", { text }));
+    return node;
+  }
+
   // ★★★ "사례별로 주가추이로 어떤 상황에서 종목을 선정하고 어떤 기법으로 매수·매도하는지
   // 그림으로" - 실제 시세가 아니라 각 기법의 발동 조건을 이해하기 쉽게 그린 도식이다.
   // 좌표는 daytrader/playbook.py 각 기법 클래스의 description/origin 을 그대로 옮긴 것으로,
@@ -3969,7 +3991,7 @@
       text: "각 기법이 실제로 어떤 주가 흐름에서 발동하는지 그린 예시 도식입니다 - 실제 시세 데이터가 아니라 "
         + "이해를 돕기 위한 그림입니다(점선은 그 기법이 보는 기준선, 점은 매수·매도가 일어나는 지점).",
     }));
-    [["entry", "📥 진입 기법 - 언제 사는가"], ["exit", "📤 청산 기법 - 언제 파는가"]].forEach(([phase, heading]) => {
+    [["entry", "진입 기법 - 언제 사는가"], ["exit", "청산 기법 - 언제 파는가"]].forEach(([phase, heading]) => {
       // ★ /api/playbook 의 "all" 목록은 시장마다(국내·암호화폐 등) 같은 기법을 한 번씩 따로 담고
       // 있다(같은 기법을 시장별로 켜고 끌 수 있어서) - 여기서는 패턴 자체가 궁금한 것이라 기법당
       // 한 장만 보여주고, 대신 "어느 시장에서 켜져 있는지"를 한 줄로 모은다.
@@ -3989,8 +4011,8 @@
       }
       const items = Array.from(byKey.values());
       if (!items.length) return;
-      wrap.appendChild(el("h2", { text: heading }));
-      const cols = el("div", { class: "cols" });
+      wrap.appendChild(_pcIconEl("h2", phase === "entry" ? "trending-up" : "trending-down", heading));
+      const cols = el("div", { class: "grid-2" });
       items.forEach((t) => {
         const card = el("div", { class: "card" });
         const onMarkets = t.markets.filter((m) => m.enabled).map((m) => (MARKETS[m.market] || {}).name || m.market);
@@ -4050,7 +4072,7 @@
   }
 
   function renderTechBonus(bonus) {
-    const cards = el("div", { class: "cols" });
+    const cards = el("div", { class: "grid-2" });
     const MARKETS = [
       { key: "domestic", label: "국내주식" },
       { key: "overseas", label: "해외주식" },
@@ -4097,14 +4119,14 @@
     });
 
     const c1 = el("span");
-    c1.appendChild(el("span", { text: "📚 검증된 기법만 사용" }));
+    c1.appendChild(_pcIconEl("span", "book", "검증된 기법만 사용"));
     c1.appendChild(infoIcon(
       "여기 있는 기법은 모두 시장에서 널리 알려진, 문헌으로 검증된 것입니다. "
       + "각 기법의 원전과, 원전의 표준값을 우리가 어떻게 바꿨는지 목록의 ⓘ 에 적었습니다."));
     guide.appendChild(c1);
 
     const c2 = el("span");
-    c2.appendChild(el("span", { text: "🔒 켜짐/꺼짐은 수동" }));
+    c2.appendChild(_pcIconEl("span", "lock", "켜짐/꺼짐은 수동"));
     c2.appendChild(infoIcon(
       "어떤 기법을 후보로 둘지는 사용자가 직접 정합니다 - 프로그램이 스스로 켜고 끄지 않습니다.\n\n"
       + "바꾸려면 [설정] → 종목·진입·청산 화면의 '진입 기법'/'청산 기법' 체크박스를 조정하세요.\n\n"
@@ -4112,7 +4134,7 @@
     guide.appendChild(c2);
 
     const c3 = el("span");
-    c3.appendChild(el("span", { text: "🤖 자동 선정 로직" }));
+    c3.appendChild(_pcIconEl("span", "sliders", "자동 선정 로직"));
     c3.appendChild(infoIcon(
       "켜진 기법이 여러 개일 때, 매 순간 시세를 평가해 '지금 가장 강한 신호'를 골라 매매합니다.\n\n"
       + "① 후보 종목을 전부 평가 — 오늘의 감시 종목마다 켜진 기법을 모두 돌려 신호 강도(0~1점)를 매깁니다.\n\n"
@@ -4130,14 +4152,14 @@
     const allList = pb.all || [];
     const enabled = pb.enabled || [];
     renderTabs(panel, "playbook", [
-      { id: "entry", label: "📥 진입 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "entry"), "진입") },
-      { id: "exit", label: "📤 청산 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "exit"), "청산") },
-      { id: "example", label: "🖼 사례로 보기", build: () => renderTechExamples(allList) },
-      { id: "bonus", label: "🎯 시장별 모델·가산점", build: () => renderTechBonus(bonus) },
+      { id: "entry", label: "진입 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "entry"), "진입") },
+      { id: "exit", label: "청산 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "exit"), "청산") },
+      { id: "example", label: "사례로 보기", build: () => renderTechExamples(allList) },
+      { id: "bonus", label: "시장별 모델·가산점", build: () => renderTechBonus(bonus) },
       {
-        id: "on", label: `✅ 켜진 기법 (${enabled.length})`,
+        id: "on", label: `켜진 기법 (${enabled.length})`,
         build: () => {
-          const cards = el("div", { class: "cols" });
+          const cards = el("div", { class: "grid-2" });
           enabled.forEach((t) => {
             const card = el("div", { class: "card" });
             card.appendChild(el("div", { html: `<b>${t.label}</b> ${techBadgeHTML(t.key, { label: t.phase === "entry" ? "진입" : "청산" })}` }));
@@ -4148,7 +4170,7 @@
         },
       },
       {
-        id: "perf", label: "📊 오늘·실적",
+        id: "perf", label: "오늘·실적",
         build: () => {
           const box = el("div");
           box.appendChild(el("h2", { text: "오늘 어디서 막혔나" }));
@@ -4236,10 +4258,13 @@
     "국내·해외·암호화폐 모두 세금·수수료 등 실제 비용 구조가 바뀌면 설정을 함께 갱신해야 정확합니다.",
   ];
 
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 예전엔 소개 문단 아래로 기능
+  // 13개·제한사항 11개 목록이 그대로 이어져 첫 화면부터 계속 스크롤해야 했다.
+  // 첫 화면은 짧은 요약 카드만 두고, 두 목록은 탭으로 나눠 한 번에 하나만 보여준다.
   function renderAbout() {
     const panel = $('.panel[data-panel="about"]');
     panel.innerHTML = "";
-    panel.appendChild(el("h2", { text: "ℹ️ AutoDayTrading 소개" }));
+    panel.appendChild(_pcIconEl("h2", "info", "AutoDayTrading 소개"));
     panel.appendChild(el("div", { class: "card" }, [
       el("p", {
         text: "AutoDayTrading 은 국내주식·해외(미국)주식·암호화폐(빗썸) 세 시장에서 테마 종목을 자동으로 골라, "
@@ -4252,11 +4277,16 @@
       }),
     ]));
 
-    panel.appendChild(el("h3", { text: "기능", style: { marginTop: "var(--s4)" } }));
-    panel.appendChild(el("ul", {}, ABOUT_FEATURES.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))));
-
-    panel.appendChild(el("h3", { text: "⚠ 제약사항·주의사항", style: { marginTop: "var(--s4)" } }));
-    panel.appendChild(el("ul", {}, ABOUT_LIMITS.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))));
+    renderTabs(panel, "about", [
+      {
+        id: "features", label: `기능 (${ABOUT_FEATURES.length})`,
+        build: () => el("ul", {}, ABOUT_FEATURES.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))),
+      },
+      {
+        id: "limits", label: `제한사항·주의 (${ABOUT_LIMITS.length})`,
+        build: () => el("ul", {}, ABOUT_LIMITS.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))),
+      },
+    ]);
   }
 
   registerPanel("about", { onShow: renderAbout });
@@ -4323,19 +4353,24 @@
     return frag;
   }
 
+  // ★★★ "최신 버전은 펼쳐서, 지난 버전은 접어서" - 예전엔 모든 버전이 카드로
+  // 나열돼 펼쳐진 채라 지난 버전을 찾으려면 한참 스크롤해야 했다. 버전마다
+  // details.acc 로 감싸 최신 것만 기본으로 열어 둔다.
   function renderReleaseNotes(data) {
     const panel = $('.panel[data-panel="release"]');
     panel.innerHTML = "";
-    panel.appendChild(el("h2", { text: "릴리즈 노트" }));
+    panel.appendChild(_pcIconEl("h2", "calendar", "릴리즈 노트"));
     const md = (data && data.markdown) || "";
     if (!md.trim()) {
       panel.appendChild(el("div", { class: "hint", text: "릴리즈 노트를 찾지 못했습니다." }));
       return;
     }
 
-    let card = null;
+    let body = null;
     let list = null;
     let item = null;
+    let firstDetails = null;
+    const olderDetails = [];  // ★ 최신 버전을 뺀 나머지 - scroll-box 하나에 몰아넣는다.
     const intro = [];
     md.split(/\r?\n/).forEach((raw) => {
       const line = raw.replace(/\s+$/, "");
@@ -4345,25 +4380,28 @@
         return;
       }
       if ((m = line.match(/^##\s+(.+)$/))) {
-        card = el("div", { class: "card", style: { marginBottom: "var(--s3)" } });
-        const head = el("h3", { text: m[1] });
+        const isFirst = !firstDetails;
+        const details = el("details", { class: "acc", open: isFirst });
+        const summary = el("summary", { text: m[1] });
         if (data.version && m[1].replace(/^v/i, "").trim() === data.version) {
-          head.appendChild(el("span", { class: "hint", text: "  ← 현재 버전" }));
+          summary.appendChild(el("span", { class: "acc-meta", text: "현재 버전" }));
         }
-        card.appendChild(head);
-        panel.appendChild(card);
+        details.appendChild(summary);
+        body = el("div", { class: "acc-body" });
+        details.appendChild(body);
+        if (isFirst) firstDetails = details; else olderDetails.push(details);
         list = null; item = null;
         return;
       }
       if (line.startsWith("# ")) return;
-      if (!card) { intro.push(line.trim()); return; }
+      if (!body) { intro.push(line.trim()); return; }
       if ((m = line.match(/^###\s+(.+)$/))) {
-        card.appendChild(el("b", { text: m[1], style: { display: "block", margin: "var(--s2) 0 4px" } }));
+        body.appendChild(el("b", { text: m[1], style: { display: "block", margin: "var(--s2) 0 4px" } }));
         list = null; item = null;
         return;
       }
       if ((m = line.match(/^-\s+(.*)$/))) {
-        if (!list) { list = el("ul", { style: { margin: "0 0 var(--s2) 1.2em", padding: 0 } }); card.appendChild(list); }
+        if (!list) { list = el("ul", { style: { margin: "0 0 var(--s2) 1.2em", padding: 0 } }); body.appendChild(list); }
         item = el("li", { style: { marginBottom: "6px" } });
         item.appendChild(_inlineNodes(m[1]));
         list.appendChild(item);
@@ -4374,12 +4412,22 @@
         item.appendChild(_inlineNodes(line.trim()));
         return;
       }
-      card.appendChild(el("div", { class: "hint" }, [_inlineNodes(line.trim())]));
+      body.appendChild(el("div", { class: "hint" }, [_inlineNodes(line.trim())]));
     });
     if (intro.length) {
-      const first = panel.querySelector(".card");
-      const p = el("div", { class: "hint", style: { marginBottom: "var(--s3)" } }, [_inlineNodes(intro.join(" "))]);
-      panel.insertBefore(p, first);
+      panel.appendChild(el("div", { class: "hint", style: { marginBottom: "var(--s3)" } }, [_inlineNodes(intro.join(" "))]));
+    }
+    if (firstDetails) panel.appendChild(firstDetails);
+    // ★★★ "최신은 펼치고 지난 것은 접어서" 만으로도 스크롤은 줄지만, 버전이 수십 개면
+    // 접힌 한 줄짜리 항목만 해도 페이지가 길어진다 - 지난 버전 전체를 scroll-box 하나에
+    // 몰아 페이지 자체 길이는 짧게, 옛 버전을 찾을 때만 그 상자 안에서 스크롤하게 한다.
+    if (olderDetails.length) {
+      const olderWrap = el("details", { class: "acc" });
+      olderWrap.appendChild(el("summary", { text: `지난 버전 (${olderDetails.length}개)` }));
+      const box = el("div", { class: "acc-body scroll-box" });
+      olderDetails.forEach((d) => box.appendChild(d));
+      olderWrap.appendChild(box);
+      panel.appendChild(olderWrap);
     }
   }
 
@@ -4507,7 +4555,7 @@
     ]));
 
     const warnRow = el("div", { class: "banner warn" });
-    warnRow.appendChild(el("span", { text: "⚠️ client_secret 은 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요." }));
+    warnRow.appendChild(_pcIconEl("span", "alert", "client_secret 은 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요."));
     warnRow.appendChild(infoIcon(
       "이 프로그램은 두 값을 exe 옆 secrets.yaml 에 이 PC·이 Windows 계정에서만 풀 수 있게 암호화해 저장하고 "
       + "어디로도 전송하지 않습니다. 이 파일을 남에게 주거나 버전관리에 올리지 마세요."));
@@ -4573,7 +4621,7 @@
     // 눈으로 볼 방법이 없었다. 실제 응답을 그대로 보여준다.
     const diagBox = el("div");
     card.appendChild(el("button", {
-      class: "b ghost small", text: "🔬 종목선정 시세 진단",
+      class: "b ghost small", text: "종목선정 시세 진단",
       onclick: async () => {
         busy(diagBox, true);
         try {
@@ -4656,7 +4704,7 @@
     ]));
 
     const tgWarn = el("div", { class: "banner warn" });
-    tgWarn.appendChild(el("span", { text: "⚠️ 봇 토큰은 secrets.yaml 에 암호화되어 저장됩니다 - 그래도 토큰이 노출되면 폐기하세요." }));
+    tgWarn.appendChild(_pcIconEl("span", "alert", "봇 토큰은 secrets.yaml 에 암호화되어 저장됩니다 - 그래도 토큰이 노출되면 폐기하세요."));
     tgWarn.appendChild(infoIcon(
       "토큰이 노출되면 다른 사람이 이 봇으로 메시지를 보낼 수 있습니다.\n\n"
       + "노출됐다면 텔레그램에서 @BotFather 를 찾아 /revoke 명령으로 토큰을 폐기하고 "
@@ -4815,7 +4863,7 @@
     ]));
 
     const warnRow = el("div", { class: "banner warn" });
-    warnRow.appendChild(el("span", { text: "⚠️ Secret Key 는 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요." }));
+    warnRow.appendChild(_pcIconEl("span", "alert", "Secret Key 는 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요."));
     warnRow.appendChild(infoIcon(
       "이 프로그램은 두 값을 exe 옆 secrets.yaml 에 이 PC·이 Windows 계정에서만 풀 수 있게 암호화해 저장하고 "
       + "어디로도 전송하지 않습니다. 이 파일을 남에게 주거나 버전관리에 올리지 마세요."));
@@ -4896,7 +4944,7 @@
     }));
     if (auth.is_default_password) {
       const warnRow = el("div", { class: "banner warn" });
-      warnRow.appendChild(el("span", { text: "⚠️ 아직 기본 비밀번호(123456)를 쓰고 있습니다 - 바깥에 열려 있다면 아무나 들어올 수 있습니다." }));
+      warnRow.appendChild(_pcIconEl("span", "alert", "아직 기본 비밀번호(123456)를 쓰고 있습니다 - 바깥에 열려 있다면 아무나 들어올 수 있습니다."));
       card.appendChild(warnRow);
     }
 
@@ -4955,7 +5003,7 @@
     const wrap = el("div");
     // ★★★ "설명 텍스트는 제목을 마우스 오버했을 때만" - 긴 안내를 본문에
     // 깔면 화면이 길어진다. 제목에 달아 두고 필요할 때만 보게 한다.
-    wrap.appendChild(titleWithHelp("🔌 외부 연동",
+    wrap.appendChild(titleWithHelp("외부 연동",
       "이 프로그램이 바깥과 주고받는 것은 세 가지뿐입니다 — 토스증권(국내주식 시세·주문), "
       + "텔레그램(알림), 빗썸(암호화폐 시세·주문).\n\n"
       + "전부 없어도 연습 모드는 인터넷 공개 시세로 정상 동작합니다."));
@@ -5009,34 +5057,45 @@
     return wrap;
   }
 
-  function _summaryBadge(ok, label) {
-    const color = ok === null ? "var(--rule2)" : ok ? "var(--rise)" : "var(--fall)";
-    const text = ok === null ? "-" : ok ? "✓" : "✗";
-    return `<span class="badge tech" style="cursor:default;background:${color};color:#fff;border-color:transparent;">${text} ${label}</span>`;
+  // ★ ok===null 이면 "아직 확인 전"(진단·사전 점검은 늦게 도착) - kpi-value 에
+  // 색을 안 주고 대시로 둔다. ok 는 rise/fall 색 관례(빨강=좋음/파랑=나쁨)를
+  // 그대로 따른다 - 이 화면 다른 곳(손익 등)과 색 의미가 어긋나지 않게 한다.
+  function _cfgKpiTone(ok) {
+    return ok === null ? "" : ok ? "rise" : "fall";
+  }
+
+  function _cfgKpiCard(iconName, label, ok, sub) {
+    const kpi = el("div", { class: "kpi" });
+    kpi.appendChild(_pcIconEl("div", iconName, label, { class: "kpi-label" }));
+    const tone = _cfgKpiTone(ok);
+    kpi.appendChild(el("div", { class: ("kpi-value " + tone).trim(), text: ok === null ? "-" : ok ? "연결됨" : "미연결" }));
+    if (sub) kpi.appendChild(el("div", { class: "kpi-sub", text: sub }));
+    return kpi;
   }
 
   function renderSetupOverview(setup, integrations, diag, pf) {
     // ★★ 아래에 "연계 테스트"(각 서비스 카드) · "연결 진단"(네트워크) ·
     // "사전 점검"(실거래 직전 체크)이 전부 계좌·인증 관련 항목을 조금씩
     // 겹쳐서 보여줘 혼란스럽다는 지적이 있었다 - 자세히 안 봐도 되게
-    // 맨 위에 한눈에 보기 요약을 두고, 나머지는 접어 둔다.
-    const card = el("div", { class: "card" });
-    card.appendChild(el("div", { style: { fontWeight: "600" }, text: "한눈에 보기" }));
-    const badges = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "var(--s2)", marginTop: "var(--s2)" } });
-    badges.innerHTML =
-      _summaryBadge(integrations.toss.configured, "토스증권") +
-      _summaryBadge(integrations.telegram.configured, "텔레그램") +
-      _summaryBadge(integrations.bithumb.configured, "빗썸") +
-      _summaryBadge(diag && diag.targets && diag.targets.length ? diag.targets.every((t) => t.ok) : null, "네트워크") +
-      _summaryBadge(pf ? pf.ok : null, "실거래 사전 점검");
-    card.appendChild(badges);
+    // 맨 위에 한눈에 보기 요약(kpi 카드)을 두고, 나머지는 탭·접힌 항목으로 미룬다.
+    const wrap = el("div");
+    wrap.appendChild(_pcIconEl("h2", "shield", "한눈에 보기"));
+    const netOk = diag && diag.targets && diag.targets.length ? diag.targets.every((t) => t.ok) : null;
+    const grid = el("div", { class: "kpi-grid" });
+    grid.appendChild(_cfgKpiCard("plug", "토스증권", integrations.toss.configured));
+    grid.appendChild(_cfgKpiCard("plug", "빗썸", integrations.bithumb.configured));
+    grid.appendChild(_cfgKpiCard("message", "텔레그램", integrations.telegram.configured));
+    grid.appendChild(_cfgKpiCard("flask", "Groq(AI 뉴스 필터)", !!(integrations.llm && integrations.llm.configured)));
+    grid.appendChild(_cfgKpiCard("wifi", "네트워크", netOk));
+    grid.appendChild(_cfgKpiCard("shield", "실거래 사전 점검", pf ? pf.ok : null));
+    wrap.appendChild(grid);
     const guideRow = el("div", { class: "hint", style: { marginTop: "var(--s2)" } });
     guideRow.appendChild(el("span", { text: "더 보기" }));
     guideRow.appendChild(infoIcon(
-      "자세한 내용은 아래 각 서비스 카드의 '연계 테스트'와, "
-      + "맨 아래 접힌 항목들(네트워크 연결 진단, 실거래 사전 점검)에서 볼 수 있습니다."));
-    card.appendChild(guideRow);
-    return card;
+      "자세한 내용은 [외부 연동] 탭의 '연계 테스트'와, "
+      + "[진단·점검] 탭의 네트워크 연결 진단·실거래 사전 점검에서 볼 수 있습니다."));
+    wrap.appendChild(guideRow);
+    return wrap;
   }
 
   function _accountHoldingsTable(rows, priceUnit) {
@@ -5070,7 +5129,7 @@
     // 화면을 열 때마다 자동으로 계좌를 조회하지 않고, 사용자가 명시적으로
     // "보기" 버튼을 눌러야만 실제 API 호출이 일어난다.
     const wrap = el("div");
-    wrap.appendChild(el("h2", { text: "💼 내 계좌 현황(토스, 조회 전용)" }));
+    wrap.appendChild(_pcIconEl("h2", "wallet", "내 계좌 현황(토스, 조회 전용)"));
 
     if (!setup.has_keys) {
       wrap.appendChild(el("div", { class: "hint", text: "토스 API 키를 등록하면 실제 보유 종목·현금 잔고를 여기서 볼 수 있습니다." }));
@@ -5086,7 +5145,7 @@
         body.innerHTML = "";
         // ★ 핵심만 한 줄로 두고 부연은 아이콘으로 - 스크롤을 줄인다.
         const w종목 = el("div", { class: "banner warn" });
-        w종목.appendChild(el("span", { text: "⚠️ 조회 전용 - 이 프로그램이 매매하지 않는 종목입니다" }));
+        w종목.appendChild(_pcIconEl("span", "alert", "조회 전용 - 이 프로그램이 매매하지 않는 종목입니다"));
         w종목.appendChild(infoIcon(
           "아래 목록은 실제 계좌의 보유 현황을 그대로 보여줄 뿐입니다.\n\n"
           + "이 프로그램은 자기가 직접 산 것만 팝니다 - 여기 있는 종목이 이 엔진이 산 것이 "
@@ -5126,14 +5185,14 @@
       });
     }
 
-    body.appendChild(el("button", { class: "b", text: "👁 계좌 현황 보기", onclick: load }));
+    body.appendChild(_pcIconEl("button", "eye", "계좌 현황 보기", { class: "b", onclick: load }));
     return wrap;
   }
 
   function renderCryptoAccountHoldings(integrations) {
     // ★★★ 토스와 마찬가지로 "보기" 버튼을 눌러야만 조회한다.
     const wrap = el("div");
-    wrap.appendChild(el("h2", { text: "🪙 내 암호화폐 계좌 현황(빗썸, 조회 전용)" }));
+    wrap.appendChild(_pcIconEl("h2", "wallet", "내 암호화폐 계좌 현황(빗썸, 조회 전용)"));
 
     const bithumbConfigured = integrations && integrations.bithumb && integrations.bithumb.configured;
     if (!bithumbConfigured) {
@@ -5150,7 +5209,7 @@
         body.innerHTML = "";
         // ★ 핵심만 한 줄로 두고 부연은 아이콘으로 - 스크롤을 줄인다.
         const w코인 = el("div", { class: "banner warn" });
-        w코인.appendChild(el("span", { text: "⚠️ 조회 전용 - 이 프로그램이 매매하지 않는 코인입니다" }));
+        w코인.appendChild(_pcIconEl("span", "alert", "조회 전용 - 이 프로그램이 매매하지 않는 코인입니다"));
         w코인.appendChild(infoIcon(
           "아래 목록은 실제 계좌의 보유 현황을 그대로 보여줄 뿐입니다.\n\n"
           + "이 프로그램은 자기가 직접 산 것만 팝니다 - 여기 있는 코인이 이 엔진이 산 것이 "
@@ -5173,7 +5232,7 @@
       });
     }
 
-    body.appendChild(el("button", { class: "b", text: "👁 암호화폐 계좌 현황 보기", onclick: load }));
+    body.appendChild(_pcIconEl("button", "eye", "암호화폐 계좌 현황 보기", { class: "b", onclick: load }));
     return wrap;
   }
 
@@ -5215,17 +5274,17 @@
       // 지금이 매매시간대인지, 네트워크가 실제로 뚫려있는지) 기준이라는 것이다.
       const connBody = el("div", {}, [el("div", { class: "hint", text: "확인 중…" })]);
       const pfBody = el("div", {}, [el("div", { class: "hint", text: "확인 중…" })]);
-      const connTitle = el("h2", { text: "🌐 네트워크 연결 진단" });
+      const connTitle = _pcIconEl("h2", "wifi", "네트워크 연결 진단");
       connTitle.appendChild(infoIcon(
         "위 연계 테스트가 'API 키가 맞는지'를 본다면, 이건 '인터넷 자체가 막혀있지 않은지'를 봅니다.\n\n"
         + "회사·학교 네트워크나 백신·방화벽이 막고 있으면 여기서 드러납니다."));
-      const tabDiag = el("div", {}, [connTitle, connBody, el("h2", { text: "🛡 실거래 사전 점검" }), pfBody]);
+      const tabDiag = el("div", {}, [connTitle, connBody, _pcIconEl("h2", "shield", "실거래 사전 점검"), pfBody]);
 
       renderTabs(panel, "setup", [
-        { id: "overview", label: "📋 한눈에", build: () => tabOverview },
-        { id: "keys", label: "🔌 외부 연동", build: () => tabKeys },
-        { id: "account", label: "💼 계좌 현황", build: () => tabAccount },
-        { id: "diag", label: "🩺 진단·점검", build: () => tabDiag },
+        { id: "overview", label: "한눈에", build: () => tabOverview },
+        { id: "keys", label: "외부 연동", build: () => tabKeys },
+        { id: "account", label: "계좌 현황", build: () => tabAccount },
+        { id: "diag", label: "진단·점검", build: () => tabDiag },
       ]);
 
       const failNote = (box, e) => { box.innerHTML = ""; box.appendChild(el("div", { class: "hint fall", text: "불러오지 못했습니다: " + e.message })); };
@@ -5247,6 +5306,28 @@
 
   // ━━ 테마 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  // ★ 테마·감시목록 한 줄을 코드가 아니라 "이름(코드)" 배지 한 칸으로 압축해서 보여준다
+  // (예전엔 <ul><li> 로 한 종목씩 줄바꿈해 종목 많은 테마는 한참 스크롤해야 했다).
+  function _themeChips(codes, names) {
+    const wrap = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } });
+    codes.forEach((c) => {
+      const label = names && names[c] ? `${names[c]} (${c})` : c;
+      wrap.appendChild(el("span", { class: "badge tech", style: { cursor: "default" }, text: label }));
+    });
+    return wrap;
+  }
+
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 테마가 많아지면 접힌 항목을 하나하나
+  // 열어 찾아야 했다. 검색창으로 테마명·종목명·코드를 걸러 안 맞는 항목은 감춘다.
+  function _themeFilterRow(onFilter) {
+    const wrap = el("div", { class: "field", style: { maxWidth: "360px" } });
+    const input = el("input", { type: "text", placeholder: "테마명·종목명·코드로 검색" });
+    input.addEventListener("input", () => onFilter(input.value.trim().toLowerCase()));
+    wrap.appendChild(_pcIconEl("label", "search", "검색"));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
   function renderThemesPanel(data) {
     const panel = $('.panel[data-panel="themes"]');
     panel.innerHTML = "";
@@ -5257,18 +5338,27 @@
 
     const themes = data.themes || {};
     const names = data.names || {};
+    const groups = []; // ★ 검색 필터가 켜고 끌 { el, haystack } 들을 모아 둔다.
+
+    const listWrap = el("div", { class: "scroll-box" });
+    panel.appendChild(_themeFilterRow((q) => {
+      groups.forEach((g) => { g.el.style.display = !q || g.haystack.includes(q) ? "" : "none"; });
+    }));
+    panel.appendChild(listWrap);
+
     // ★ 종목코드만 나오던 문제 - 옆에 이름을 함께 보여준다(themes.yaml의
-    // 인라인 주석에서 뽑아온 이름, 없으면 코드 그대로).
+    // 인라인 주석에서 뽑아온 이름, 없으면 코드 그대로). 국내 테마는 기본으로
+    // 접어 두고(테마 수가 많을 수 있어서), 나머지 두 목록만 펼쳐 둔다.
     Object.entries(themes).forEach(([name, codes]) => {
-      const details = el("details");
-      details.appendChild(el("summary", { text: `${name} (${codes.length}종목)` }));
-      const ul = el("ul");
-      codes.forEach((c) => {
-        const label = names[c] ? `${names[c]} (${c})` : c;
-        ul.appendChild(el("li", { text: label }));
-      });
-      details.appendChild(ul);
-      panel.appendChild(details);
+      const details = el("details", { class: "acc" });
+      const summary = el("summary", { text: name });
+      summary.appendChild(el("span", { class: "acc-meta", text: `${codes.length}종목` }));
+      details.appendChild(summary);
+      const body = el("div", { class: "acc-body" }, [_themeChips(codes, names)]);
+      details.appendChild(body);
+      listWrap.appendChild(details);
+      const haystack = (name + " " + codes.map((c) => `${names[c] || ""} ${c}`).join(" ")).toLowerCase();
+      groups.push({ el: details, haystack });
     });
 
     // ★★ "해외주식·암호화폐 종목도 여기서 보여야 한다"는 요청 - 테마
@@ -5277,30 +5367,36 @@
     // 수정은 설정 화면에서 한다 - 여기서 또 만들면 두 군데를 손봐야 하는
     // 창구가 생긴다.
     const crypto = data.crypto_watchlist || [];
-    const cryptoDetails = el("details");
-    cryptoDetails.appendChild(el("summary", { text: `🪙 암호화폐 감시 목록 (${crypto.length}종목)` }));
-    const cryptoUl = el("ul");
+    const cryptoDetails = el("details", { class: "acc", open: true });
+    const cryptoSummary = _pcIconEl("summary", "wallet", "암호화폐 감시 목록");
+    cryptoSummary.appendChild(el("span", { class: "acc-meta", text: `${crypto.length}종목` }));
+    cryptoDetails.appendChild(cryptoSummary);
+    const cryptoBody = el("div", { class: "acc-body" });
     if (!crypto.length) {
-      cryptoUl.appendChild(el("li", { class: "hint", text: "등록된 종목이 없습니다." }));
+      cryptoBody.appendChild(el("div", { class: "hint", text: "등록된 종목이 없습니다." }));
     } else {
-      crypto.forEach((c) => cryptoUl.appendChild(el("li", { text: c })));
+      cryptoBody.appendChild(_themeChips(crypto));
     }
-    cryptoDetails.appendChild(cryptoUl);
-    cryptoDetails.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 암호화폐 섹션에서 합니다." }));
-    panel.appendChild(cryptoDetails);
+    cryptoBody.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 암호화폐 섹션에서 합니다." }));
+    cryptoDetails.appendChild(cryptoBody);
+    listWrap.appendChild(cryptoDetails);
+    groups.push({ el: cryptoDetails, haystack: ("암호화폐 감시 목록 " + crypto.join(" ")).toLowerCase() });
 
     const overseas = data.overseas_watchlist || [];
-    const overseasDetails = el("details");
-    overseasDetails.appendChild(el("summary", { text: `🌍 해외주식 관심 종목 (${overseas.length}종목)` }));
-    const overseasUl = el("ul");
+    const overseasDetails = el("details", { class: "acc", open: true });
+    const overseasSummary = _pcIconEl("summary", "globe", "해외주식 관심 종목");
+    overseasSummary.appendChild(el("span", { class: "acc-meta", text: `${overseas.length}종목` }));
+    overseasDetails.appendChild(overseasSummary);
+    const overseasBody = el("div", { class: "acc-body" });
     if (!overseas.length) {
-      overseasUl.appendChild(el("li", { class: "hint", text: "등록된 종목이 없습니다." }));
+      overseasBody.appendChild(el("div", { class: "hint", text: "등록된 종목이 없습니다." }));
     } else {
-      overseas.forEach((c) => overseasUl.appendChild(el("li", { text: c })));
+      overseasBody.appendChild(_themeChips(overseas));
     }
-    overseasDetails.appendChild(overseasUl);
-    overseasDetails.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 해외주식 섹션에서 합니다." }));
-    panel.appendChild(overseasDetails);
+    overseasBody.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 해외주식 섹션에서 합니다." }));
+    overseasDetails.appendChild(overseasBody);
+    listWrap.appendChild(overseasDetails);
+    groups.push({ el: overseasDetails, haystack: ("해외주식 관심 종목 " + overseas.join(" ")).toLowerCase() });
 
     const addForm = el("div", { class: "card" });
     addForm.appendChild(el("div", { html: "<b>국내주식 테마에 종목 추가</b>" }));
@@ -5340,6 +5436,56 @@
   let _configRaw = null;
 
   let _activeConfigGroup = null;  // ★ 모듈 스코프 - 저장 후 다시 그려도 보고 있던 탭이 안 바뀌게 유지한다.
+  const _cfgActiveSection = {};  // ★ 그룹명 -> 그 그룹 안에서 지금 보고 있는 섹션 제목(모듈 스코프, 위와 같은 이유).
+
+  function _cfgIsWide() {
+    return typeof window.matchMedia === "function" && window.matchMedia("(min-width:1024px)").matches;
+  }
+
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 국내주식 그룹만 섹션(카드)이 7개라
+  // 예전엔 전부 펼쳐 쌓아 두고 칩으로 그 위치까지 스크롤만 시켜줬다(quicknav) - 카드
+  // 자체는 다 떠 있어서 스크롤 총량은 그대로였다. 이제 섹션 목록(데스크톱은 왼쪽 세로,
+  // 모바일은 위쪽 칩 줄) + 오른쪽/아래 폼 한 칸으로 나눠, 한 번에 섹션 하나만 그린다.
+  // 섹션이 하나뿐인 그룹(암호화폐·해외주식·스윙)은 목록 없이 바로 그 섹션만 보여준다.
+  function _cfgSectionShell(groupName, built) {
+    if (built.length <= 1) {
+      const only = el("div");
+      built.forEach(({ sectionEl }) => only.appendChild(sectionEl));
+      return only;
+    }
+    if (!_cfgActiveSection[groupName] || !built.some(({ section }) => section.title === _cfgActiveSection[groupName])) {
+      _cfgActiveSection[groupName] = built[0].section.title;
+    }
+    const wide = _cfgIsWide();
+    const nav = el("div", {
+      class: "chips",
+      style: wide ? { flexDirection: "column", alignItems: "stretch", minWidth: "180px", flex: "0 0 auto" } : {},
+    });
+    const pane = el("div", { style: { flex: "1", minWidth: "0" } });
+    // ★★★ 섹션을 전부 pane 에 심어 두고 display 로만 켜고 끈다(그룹 탭과 같은 패턴) -
+    // 안 보이는 섹션을 통째로 지웠다(innerHTML="") 되살리면, 그 사이 입력해 둔 값이
+    // 저장(collectConfig 는 DOM 에서 값을 읽는다) 시점에 화면에 없다는 이유로 조용히
+    // 원래 값으로 되돌아간다 - 실제로 겪을 뻔한 데이터 유실이라 반드시 display 로만 전환한다.
+    function showSection(title) {
+      _cfgActiveSection[groupName] = title;
+      built.forEach(({ section, sectionEl }) => { sectionEl.style.display = section.title === title ? "" : "none"; });
+      $$(".chip", nav).forEach((c) => c.classList.toggle("active", c.dataset.sectionTitle === title));
+    }
+    built.forEach(({ section, sectionEl }) => {
+      pane.appendChild(sectionEl);
+      const chip = el("button", {
+        type: "button", text: section.title, "data-section-title": section.title,
+        class: "chip" + (section.title === _cfgActiveSection[groupName] ? " active" : ""),
+        onclick: () => showSection(section.title),
+      });
+      nav.appendChild(chip);
+    });
+    showSection(_cfgActiveSection[groupName]);
+    const shell = el("div", { style: { display: "flex", gap: "var(--s3)", alignItems: "flex-start", flexDirection: wide ? "row" : "column" } });
+    shell.appendChild(nav);
+    shell.appendChild(pane);
+    return shell;
+  }
 
   function renderConfig(data) {
     const panel = $('.panel[data-panel="config"]');
@@ -5395,8 +5541,8 @@
     // 명확하다는 지적에 따라 바꿨다.
     const GROUP_ORDER = ["거래선택", "공통", "국내주식", "해외주식", "암호화폐", "스윙", "정보·알림", "시스템"];
     const GROUP_ICON = {
-      "거래선택": "🎯", "공통": "🔧", "국내주식": "🇰🇷", "해외주식": "🌍",
-      "암호화폐": "🪙", "스윙": "📈", "정보·알림": "🔔", "시스템": "💻",
+      "거래선택": "target", "공통": "sliders", "국내주식": "chart", "해외주식": "globe",
+      "암호화폐": "wallet", "스윙": "trending-up", "정보·알림": "bell", "시스템": "layers",
     };
     // ★★★ "설정에서 거래선택시 현재 매매중이 아닌 건 선택할 수 있어야 한다" - 예전엔
     // 그룹(탭) 전체를 하나의 시장에 묶어 잠갔다("거래선택" 탭 전체를 국내주식 거래 중이면
@@ -5471,7 +5617,7 @@
         // 덕분에 섹션까지는 스크롤 없이 바로 갈 수 있게 됐으니, 이제 그 안의 내용도 클릭 없이
         // 바로 보이게 기본으로 펼쳐 둔다(그래도 필요 없으면 접을 수 있게 <details> 는 유지).
         const det = el("details", { class: "auto-fields", open: true });
-        det.appendChild(el("summary", { text: `⚙ 자동 설정 ${autoFields.length}개 - 프로그램이 정한 값(기본값 권장, 필요할 때만 수정)` }));
+        det.appendChild(el("summary", { text: `자동 설정 ${autoFields.length}개 - 프로그램이 정한 값(기본값 권장, 필요할 때만 수정)` }));
         autoFields.forEach((f) => {
           const node = buildField(f, data.raw, techs);
           const lab = node.querySelector("label");
@@ -5518,68 +5664,28 @@
     const tabSeg = el("div", { class: "seg", style: { flexWrap: "wrap" } });
     const groupPanels = {};
     configGroups.forEach((groupName) => {
-      tabSeg.appendChild(el("button", {
-        text: `${GROUP_ICON[groupName] || ""} ${groupName}`.trim(), class: groupName === _activeConfigGroup ? "active" : "",
-        onclick: (e) => {
-          _activeConfigGroup = groupName;
-          $$("button", tabSeg).forEach((b) => b.classList.remove("active"));
-          e.target.classList.add("active");
-          Object.entries(groupPanels).forEach(([g, node]) => {
-            node.style.display = g === groupName ? "" : "none";
-          });
-        },
-      }));
+      const btn = _pcIconEl("button", GROUP_ICON[groupName], groupName, {
+        class: groupName === _activeConfigGroup ? "active" : "",
+      });
+      btn.addEventListener("click", () => {
+        _activeConfigGroup = groupName;
+        $$("button", tabSeg).forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        Object.entries(groupPanels).forEach(([g, node]) => {
+          node.style.display = g === groupName ? "" : "none";
+        });
+      });
+      tabSeg.appendChild(btn);
     });
 
+    // ★ 그룹(시장) 하나를 고르면 그 안의 섹션은 _cfgSectionShell() 이 목록 + 폼 한 칸으로
+    // 나눠 보여준다(위 주석 참고) - 예전처럼 섹션 카드를 전부 쌓아 두지 않는다.
     const scrollArea = el("div", { class: "config-scroll" });
     configGroups.forEach((groupName) => {
       const sections = byGroup[groupName];
       const groupPanel = el("div", { style: { display: groupName === _activeConfigGroup ? "" : "none" } });
-      const cols = el("div", { class: "cols" });
-      // ★★★ "설정에 모든 항목을 접었는데, 항목별 스크롤 해야하니 네비게이션이
-      // 불편해" - 섹션(카드)이 여러 개인 그룹(예: 국내주식의 동작 모드·위험
-      // 관리·거래 세션 등)은 원하는 카드를 찾으려면 위에서부터 쭉 스크롤해야
-      // 했다. 섹션 제목을 칩으로 늘어놓고 누르면 그 카드로 바로 이동하게 한다.
       const built = sections.map((section) => ({ section, sectionEl: renderSectionCard(section) }));
-      built.forEach(({ sectionEl }) => cols.appendChild(sectionEl));
-      if (built.length >= 3) {
-        const nav = el("div", { class: "config-quicknav" });
-        const chips = built.map(({ section, sectionEl }) => {
-          const chip = el("button", {
-            type: "button", class: "config-quicknav-chip", text: section.title,
-            onclick: () => {
-              // ★ .config-scroll 은 자체 overflow-y:auto 스크롤 박스이고(가로 탭
-              // 아래 내용만 스크롤되게 만든 구조), 이 칩 목록(nav)은 그 안에서
-              // position:sticky 로 위에 붙어 있다. scrollIntoView 를 그대로
-              // 쓰면 sticky 로 화면에 계속 떠 있는 nav 높이만큼 섹션 제목이
-              // 가려지므로, nav 높이를 뺀 위치를 직접 계산해서 이동한다.
-              const scrollRect = scrollArea.getBoundingClientRect();
-              const targetRect = sectionEl.getBoundingClientRect();
-              const navH = nav.offsetHeight || 0;
-              const target = scrollArea.scrollTop + (targetRect.top - scrollRect.top) - navH - 8;
-              scrollArea.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-            },
-          });
-          return { chip, sectionEl };
-        });
-        chips.forEach(({ chip }) => nav.appendChild(chip));
-        groupPanel.appendChild(nav);
-        // ★ 나이스투해브: 지금 스크롤로 보고 있는 섹션의 칩을 강조한다 -
-        // 어려우면 생략해도 되는 항목이라 간단한 형태로만 넣는다.
-        if (typeof IntersectionObserver === "function") {
-          const io = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-              if (!entry.isIntersecting) return;
-              const match = chips.find((c) => c.sectionEl === entry.target);
-              if (!match) return;
-              chips.forEach((c) => c.chip.classList.remove("active"));
-              match.chip.classList.add("active");
-            });
-          }, { root: scrollArea, rootMargin: "-10% 0px -70% 0px", threshold: 0 });
-          chips.forEach(({ sectionEl }) => io.observe(sectionEl));
-        }
-      }
-      groupPanel.appendChild(cols);
+      groupPanel.appendChild(_cfgSectionShell(groupName, built));
       groupPanels[groupName] = groupPanel;
       scrollArea.appendChild(groupPanel);
     });
@@ -6169,18 +6275,23 @@
       panel.appendChild(renderReviewSummary(data.stats));
       if (data.note) panel.appendChild(el("div", { class: "banner warn", text: data.note }));
 
-      panel.appendChild(renderAngleTable("기법별", data.stats.by_technique, 12));
-      panel.appendChild(renderAngleTable("청산사유별", data.stats.by_reason, 12));
-      panel.appendChild(renderAngleTable("시간대별", data.stats.by_slot, 8));
-      panel.appendChild(renderAngleTable("테마별", data.stats.by_theme, 12));
-      panel.appendChild(renderAngleTable("요일별", data.stats.by_weekday, 12));
+      // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 예전엔 요약 아래로 각도별
+      // 분석 표 5개 · 제안 카드 · 자체안 · 반영 이력 · 암호화폐/스윙 요약까지 한
+      // 화면에 전부 이어 붙어 있었다. 세 묶음으로 나눠 탭 하나만 보이게 한다
+      // (renderTabs 는 첫 화면부터 항상 있던 공용 헬퍼다).
+      const breakdownBox = el("div");
+      breakdownBox.appendChild(renderAngleTable("기법별", data.stats.by_technique, 12));
+      breakdownBox.appendChild(renderAngleTable("청산사유별", data.stats.by_reason, 12));
+      breakdownBox.appendChild(renderAngleTable("시간대별", data.stats.by_slot, 8));
+      breakdownBox.appendChild(renderAngleTable("테마별", data.stats.by_theme, 12));
+      breakdownBox.appendChild(renderAngleTable("요일별", data.stats.by_weekday, 12));
 
-      panel.appendChild(el("h2", { text: "제안" }));
+      const proposalsBox = el("div");
       if (!data.proposals.length) {
-        panel.appendChild(el("div", { class: "hint", text: "지금은 제안할 것이 없습니다." }));
+        proposalsBox.appendChild(el("div", { class: "hint", text: "지금은 제안할 것이 없습니다." }));
       } else {
         const { box, checks } = renderProposals(data.proposals);
-        panel.appendChild(box);
+        proposalsBox.appendChild(box);
 
         const applyBar = el("div", { class: "card" });
         const noteInput = el("input", { type: "text", placeholder: "메모(선택)" });
@@ -6203,13 +6314,13 @@
             }
           },
         }));
-        panel.appendChild(applyBar);
+        proposalsBox.appendChild(applyBar);
       }
+      proposalsBox.appendChild(renderIdeas(data.ideas));
 
-      panel.appendChild(renderIdeas(data.ideas));
-
+      const histBox = el("div");
       const histData = await api("/api/review/history");
-      panel.appendChild(renderReviewHistory((histData.entries || []).filter((e) => e.month === month)));
+      histBox.appendChild(renderReviewHistory((histData.entries || []).filter((e) => e.month === month)));
 
       // ★ 암호화폐는 review.py(최적화 제안 9종 등 국내주식 전용 로직)를 거치지
       // 않는다 - 완전히 다른 파일(crypto_state.json)에서 그 달 것만 걸러
@@ -6231,7 +6342,7 @@
             html: `거래 ${monthRows.length}건 · 승률 ${pct0(wins / monthRows.length)} · 손익 `
               + `<span class="${dir(totalPnl)}">${signed(totalPnl, "won")}</span>`,
           }));
-          panel.appendChild(box);
+          histBox.appendChild(box);
         }
       } catch (e) {
         /* 조용히 건너뛴다 - 국내주식 리뷰는 이미 다 보여줬다. */
@@ -6256,11 +6367,17 @@
             html: `거래 ${monthRows.length}건 · 승률 ${pct0(wins / monthRows.length)} · 손익 `
               + `<span class="${dir(totalPnl)}">${signed(totalPnl, "won")}</span>`,
           }));
-          panel.appendChild(box);
+          histBox.appendChild(box);
         }
       } catch (e) {
         /* 조용히 건너뛴다. */
       }
+
+      renderTabs(panel, "review", [
+        { id: "breakdown", label: "각도별 분석", build: () => breakdownBox },
+        { id: "proposals", label: `제안 (${data.proposals.length})`, build: () => proposalsBox },
+        { id: "history", label: "반영 이력", build: () => histBox },
+      ]);
     } catch (e) {
       panel.innerHTML = "";
       toast(e.message, "error");
@@ -6303,7 +6420,7 @@
   // (daytrader/technique_backtest.py·technique_prefs.py·playbook.py 참고). ━━━━━━━━━━━━━━━━
   function renderTechniqueBacktestCard() {
     const card = el("div", { class: "card" });
-    const title = el("h2", { text: "🔬 종목별 매매기법 백테스트" });
+    const title = _pcIconEl("h2", "flask", "종목별 매매기법 백테스트");
     title.appendChild(infoIcon(
       "오늘 선정된 테마 종목에 최근 실제 시세(1분봉)를 기법별로 독립 재생해, 이 종목에서 어느 "
       + "기법이 더 잘 맞았는지 순위를 매깁니다.\n\n"
@@ -6417,7 +6534,7 @@
   // 모두 최신순으로 보여준다.
   async function renderTechniqueBacktestHistoryCard() {
     const card = el("div", { class: "card" });
-    card.appendChild(el("h2", { text: "🗂 최근 실행 기록" }));
+    card.appendChild(_pcIconEl("h2", "layers", "최근 실행 기록"));
     card.appendChild(el("div", {
       class: "hint",
       text: "종목이 새로 선정될 때마다 자동으로도 실행됩니다(하루 한 번, 같은 종목 조합이면 다시 돌지 않음) - 위에서 직접 실행할 수도 있습니다.",
@@ -6472,34 +6589,42 @@
     const _savedTop = _scrollEl.scrollTop;
     try {
     panel.innerHTML = "";
-    const labWarn = el("div", { class: "banner warn" });
-    labWarn.appendChild(el("span", { text: "🧪 실험실 참가자는 전부 가상 체결입니다 - 실제 주문은 나가지 않습니다." }));
-    labWarn.appendChild(infoIcon(
-      "실제 주문을 내는 엔진은 언제나 하나뿐입니다.\n\n"
-      + "실험실에서 여러 설정을 동시에 돌려도 모두 가상 체결이며, "
-      + "지금 돌고 있는 실거래 엔진에는 절대 주문을 내지 않습니다.\n\n"
-      + "여기서 좋은 결과가 나온 설정을 실제로 쓰려면 [설정] 화면에서 직접 바꿔야 합니다."));
-    panel.appendChild(labWarn);
-    panel.appendChild(renderTechniqueBacktestCard());
-    panel.appendChild(await renderTechniqueBacktestHistoryCard());
+
+    // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 종목별 기법 백테스트(실행+기록)와
+    // 가상 실험(설정 비교)은 서로 다른 용도라 늘 함께 볼 필요가 없다 - 탭으로 나눠
+    // 한 번에 하나만 보여준다(renderTabs 는 다른 패널에서도 쓰는 공용 헬퍼).
+    const backtestBox = el("div");
+    backtestBox.appendChild(renderTechniqueBacktestCard());
+    backtestBox.appendChild(await renderTechniqueBacktestHistoryCard());
 
     let data;
     try {
       data = await api("/api/lab");
     } catch (e) {
       toast(e.message, "error");
+      renderTabs(panel, "lab", [{ id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox }]);
       return;
     }
 
+    const expBox = el("div");
+    const labWarn = el("div", { class: "banner warn" });
+    labWarn.appendChild(_pcIconEl("span", "flask", "실험실 참가자는 전부 가상 체결입니다 - 실제 주문은 나가지 않습니다."));
+    labWarn.appendChild(infoIcon(
+      "실제 주문을 내는 엔진은 언제나 하나뿐입니다.\n\n"
+      + "실험실에서 여러 설정을 동시에 돌려도 모두 가상 체결이며, "
+      + "지금 돌고 있는 실거래 엔진에는 절대 주문을 내지 않습니다.\n\n"
+      + "여기서 좋은 결과가 나온 설정을 실제로 쓰려면 [설정] 화면에서 직접 바꿔야 합니다."));
+    expBox.appendChild(labWarn);
+
     if (data.running) {
       if (data.spec) {
-        panel.appendChild(el("div", { class: "hint", text: `실행 중: ${data.spec.kind === "shadow" ? "섀도 비교" : "대조 실험"} · 시드 ${data.spec.seed}` }));
-        panel.appendChild(el("div", { class: "hint", text: data.spec.fairness }));
+        expBox.appendChild(el("div", { class: "hint", text: `실행 중: ${data.spec.kind === "shadow" ? "섀도 비교" : "대조 실험"} · 시드 ${data.spec.seed}` }));
+        expBox.appendChild(el("div", { class: "hint", text: data.spec.fairness }));
       }
       const grid = el("div", { class: "cols" });
       data.participants.forEach((p) => grid.appendChild(renderLabParticipantCard(p)));
-      panel.appendChild(grid);
-      panel.appendChild(el("button", {
+      expBox.appendChild(grid);
+      expBox.appendChild(el("button", {
         class: "b quiet-danger", text: "실험 중지(가상만)",
         onclick: async () => {
           await api("/api/lab/stop", { method: "POST" });
@@ -6507,6 +6632,10 @@
           loadLab();
         },
       }));
+      renderTabs(panel, "lab", [
+        { id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox },
+        { id: "experiment", label: "가상 실험(실행 중)", build: () => expBox },
+      ]);
       if (!_labTimer) {
         _labTimer = setInterval(() => {
           if (_activeTabIs("lab")) loadLab();
@@ -6519,7 +6648,7 @@
       _labTimer = null;
     }
 
-    panel.appendChild(el("div", { class: "hint", text: data.how }));
+    expBox.appendChild(el("div", { class: "hint", text: data.how }));
 
     const presetBox = el("div", { class: "cols" });
     const checks = [];
@@ -6532,14 +6661,14 @@
       label.appendChild(el("div", { class: "hint", text: p.note }));
       presetBox.appendChild(label);
     });
-    panel.appendChild(presetBox);
+    expBox.appendChild(presetBox);
 
     const speedSel = el("select");
     [60, 600, 3600].forEach((s) => speedSel.appendChild(el("option", { value: String(s), text: `${s}배속` })));
     speedSel.value = "600";
-    panel.appendChild(speedSel);
+    expBox.appendChild(speedSel);
 
-    panel.appendChild(el("button", {
+    expBox.appendChild(el("button", {
       class: "b", text: "실험 시작",
       onclick: async () => {
         const chosen = checks.filter((cb) => cb.checked).map((cb) => cb.value);
@@ -6568,8 +6697,8 @@
     try {
       const result = await api("/api/lab/result");
       if (result.participants && result.participants.length) {
-        panel.appendChild(el("h2", { text: "지난 결과" }));
-        panel.appendChild(el("div", { class: "banner", text: result.verdict }));
+        expBox.appendChild(el("h2", { text: "지난 결과" }));
+        expBox.appendChild(el("div", { class: "banner", text: result.verdict }));
         const gridBox = el("div");
         new DataGrid(gridBox, {
           columns: [
@@ -6583,12 +6712,17 @@
           ],
           rows: result.participants, page: 0, storageKey: "grid.lab.result",
         });
-        panel.appendChild(gridBox);
-        (result.caution || []).forEach((c) => panel.appendChild(el("div", { class: "hint", text: "· " + c })));
+        expBox.appendChild(gridBox);
+        (result.caution || []).forEach((c) => expBox.appendChild(el("div", { class: "hint", text: "· " + c })));
       }
     } catch (e) {
       /* 지난 결과가 없으면 조용히 넘어간다. */
     }
+
+    renderTabs(panel, "lab", [
+      { id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox },
+      { id: "experiment", label: "가상 실험", build: () => expBox },
+    ]);
     } finally {
       _restoreScrollAfter(_savedTop, _scrollEl);
     }
