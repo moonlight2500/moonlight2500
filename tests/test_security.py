@@ -242,6 +242,97 @@ def test_stale_cookie_needs_trusted_device() -> None:
         S._devices_path = orig
 
 
+def test_logout_revokes_session_server_side() -> None:
+    print("\n== ★ [2-6] 로그아웃이 쿠키만 지우는 게 아니라 서버 쪽에서도 세션을 무효화 ==")
+    import tempfile
+    from daytrader import devices
+    tmp_devices_path = os.path.join(tempfile.mkdtemp(), "devices.json")
+    tmp_logout_path = os.path.join(tempfile.mkdtemp(), "session_logout.json")
+    orig_devices_path = S._devices_path
+    orig_logout_path = S._session_logout_path
+    S._devices_path = lambda: tmp_devices_path
+    S._session_logout_path = lambda: tmp_logout_path
+
+    def token_at(ts: int) -> str:
+        return f"{ts}.{S._sign_session(ts)}"
+
+    try:
+        device_a = devices.new_device_token()
+        device_b = devices.new_device_token()
+        key_a = devices.key_for_token(device_a)
+        key_b = devices.key_for_token(device_b)
+        store = devices.DeviceStore(tmp_devices_path)
+        store.trust_directly(key_a, "9.9.9.9", "DeviceA/1.0")
+        store.trust_directly(key_b, "8.8.8.8", "DeviceB/1.0")
+
+        now = int(time.time())
+        # ★ 전부 과거 시각으로만 구성한다 - 세션 토큰은 미래로 60초 넘게 앞서면(시계 오차 감안분을
+        # 넘으면) 그 자체로 무효 처리되므로, "미래" 타임스탬프를 쓰면 로그아웃과 무관하게 실패한다.
+        before_logout_ts = now - 300
+        logout_at_ts = now - 200
+        after_logout_ts = now - 100
+        all_logout_ts = now - 50
+        after_all_ts = now - 10
+
+        def req_for(device_token, ts, ip):
+            return make_request(client=(ip, 1),
+                                 cookies={S.AUTH_COOKIE_NAME: token_at(ts), S.DEVICE_COOKIE_NAME: device_token})
+
+        check("로그아웃 기록이 없으면 정상 인증됨(기기 A)",
+              S._is_authenticated(req_for(device_a, before_logout_ts, "9.9.9.9")))
+
+        # 기기 A 를 로그아웃시킨 것으로 서버에 기록해 둔다(실제로는 /api/logout 이 이렇게 한다).
+        S._save_session_logout_state({"devices": {key_a: float(logout_at_ts)}})
+        check("★ 로그아웃 시각보다 먼저 발급된 세션(기기 A)은 쿠키가 그대로여도 더는 인증되지 않음",
+              not S._is_authenticated(req_for(device_a, before_logout_ts, "9.9.9.9")))
+        check("로그아웃 이후 새로 로그인해 발급된 세션(기기 A)은 정상 인증됨",
+              S._is_authenticated(req_for(device_a, after_logout_ts, "9.9.9.9")))
+        check("다른 기기(B)는 기기 A 의 로그아웃에 영향받지 않음",
+              S._is_authenticated(req_for(device_b, before_logout_ts, "8.8.8.8")))
+
+        # 전체 기기 로그아웃 - 기기와 무관하게 그 시각 이전 세션을 전부 무효화한다.
+        S._save_session_logout_state({"all_at": float(all_logout_ts), "devices": {}})
+        check("★ 전체 로그아웃 기준시각 이전 세션은 기기 A 도 무효화됨",
+              not S._is_authenticated(req_for(device_a, after_logout_ts, "9.9.9.9")))
+        check("★ 전체 로그아웃 기준시각 이전 세션은 기기 B 도 무효화됨",
+              not S._is_authenticated(req_for(device_b, before_logout_ts, "8.8.8.8")))
+        check("전체 로그아웃 이후 새로 발급된 세션은 정상 인증됨",
+              S._is_authenticated(req_for(device_b, after_all_ts, "8.8.8.8")))
+    finally:
+        S._devices_path = orig_devices_path
+        S._session_logout_path = orig_logout_path
+
+
+def test_logout_endpoints_call_revocation() -> None:
+    print("\n== /api/logout, /api/logout/all 라우트가 실제로 무효화 기록을 남김 ==")
+    import asyncio
+    import tempfile
+    from daytrader import devices
+
+    tmp_devices_path = os.path.join(tempfile.mkdtemp(), "devices.json")
+    tmp_logout_path = os.path.join(tempfile.mkdtemp(), "session_logout.json")
+    orig_devices_path = S._devices_path
+    orig_logout_path = S._session_logout_path
+    S._devices_path = lambda: tmp_devices_path
+    S._session_logout_path = lambda: tmp_logout_path
+    try:
+        device_tok = devices.new_device_token()
+        key = devices.key_for_token(device_tok)
+        devices.DeviceStore(tmp_devices_path).trust_directly(key, "9.9.9.9", "Device/1.0")
+
+        req = make_request(client=("9.9.9.9", 1), method="POST", cookies={S.DEVICE_COOKIE_NAME: device_tok})
+        asyncio.run(S.logout(req))
+        state = S._load_session_logout_state()
+        check("POST /api/logout 이 이 기기 키로 로그아웃 시각을 남김", key in (state.get("devices") or {}))
+
+        asyncio.run(S.logout_all(req))
+        state = S._load_session_logout_state()
+        check("POST /api/logout/all 이 전체 기준시각(all_at)을 남김", isinstance(state.get("all_at"), (int, float)))
+    finally:
+        S._devices_path = orig_devices_path
+        S._session_logout_path = orig_logout_path
+
+
 def test_password_and_lockout() -> None:
     print("\n== 비밀번호 강도·잠금 ==")
     for pw in ("123456", "111111", "000000", "654321", "012345", "121212"):
@@ -599,6 +690,7 @@ def test_first_run_default_password() -> None:
 def main() -> None:
     for t in (test_session_token, test_host_and_origin, test_confirm_tokens, test_local_control,
               test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
+              test_logout_revokes_session_server_side, test_logout_endpoints_call_revocation,
               test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
               test_idle_timeout, test_config_path_traversal_guard, test_config_post_rejects_unknown_keys,
               test_first_run_default_password, test_global_login_lockout_and_persistence,

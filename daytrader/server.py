@@ -304,8 +304,8 @@ def _session_idle_seconds() -> int:
     return max(0, int(_idle_cache["minutes"])) * 60
 
 
-def _session_token_age(token: str | None):
-    """유효한 서명이면 발급(=마지막 사용자 조작) 후 지난 초, 아니면 None."""
+def _session_token_ts(token: str | None) -> int | None:
+    """서명이 유효하면 발급시각(정수, 초 단위 유닉스 타임)을 돌려주고, 아니면 None."""
     if not token or "." not in token:
         return None
     ts_s, sig = token.split(".", 1)
@@ -314,6 +314,14 @@ def _session_token_age(token: str | None):
     except ValueError:
         return None
     if not _same(sig, _sign_session(ts)):
+        return None
+    return ts
+
+
+def _session_token_age(token: str | None):
+    """유효한 서명이면 발급(=마지막 사용자 조작) 후 지난 초, 아니면 None."""
+    ts = _session_token_ts(token)
+    if ts is None:
         return None
     return time.time() - ts
 
@@ -375,6 +383,88 @@ def _devices_path() -> str:
     return os.path.join(cfg_now().state_dir, "devices.json")
 
 
+# ★★★ [2-6] 실제로 겪을 수 있는 구멍 - /api/logout 은 예전엔 쿠키만 지웠다. 세션 쿠키 자체는
+# HMAC(발급시각:비밀번호) 로 서명된 "무상태" 토큰이라, 로그아웃해도 그 문자열 자체는 계속 유효한
+# 서명으로 남는다 - 누군가 그 쿠키 값을 미리 빼내 뒀다면(기기 도난·백업 등) 로그아웃 후에도
+# 그 값으로 계속 들어올 수 있었다. 그래서 "이 기기(쿠키)로 발급된 세션은 이 시각 이전이면
+# 더 이상 인정하지 않는다"는 기준시각을 기기별로, 그리고 전체 기기 공통으로 저장해 둔다.
+# 비밀번호를 바꾸면(서명 자체가 바뀌어) 이미 모든 기기가 로그아웃되는 것과 같은 효과를 내지만,
+# 여기서는 비밀번호를 바꾸지 않고도 "이 기기만" 또는 "전체 기기" 로그아웃을 가능하게 한다.
+_session_logout_lock = threading.Lock()
+
+
+def _session_logout_path() -> str:
+    return os.path.join(cfg_now().state_dir, "session_logout.json")
+
+
+def _load_session_logout_state() -> dict:
+    try:
+        with open(_session_logout_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_session_logout_state(data: dict) -> None:
+    try:
+        path = _session_logout_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _device_key_of(request: Request) -> str:
+    from daytrader import devices
+    token = request.cookies.get(DEVICE_COOKIE_NAME, "")
+    return devices.key_for_token(token) if token else ""
+
+
+def _record_logout(request: Request) -> None:
+    """이 기기(쿠키)로 발급된, 지금까지의 모든 세션을 무효화한다."""
+    key = _device_key_of(request)
+    if not key:
+        return
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+        now = time.time()
+        per_device = {
+            k: v for k, v in (data.get("devices") or {}).items()
+            if isinstance(v, (int, float)) and now - v < AUTH_SESSION_MAX_AGE
+        }
+        per_device[key] = now
+        data["devices"] = per_device
+        _save_session_logout_state(data)
+
+
+def _record_logout_all_devices() -> None:
+    """모든 기기의 세션을 한 번에 무효화한다("로그아웃 - 모든 기기")."""
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+        data["all_at"] = time.time()
+        data["devices"] = {}  # 전체 기준시각 하나가 개별 기록을 다 덮으니 정리해 둔다.
+        _save_session_logout_state(data)
+
+
+def _session_revoked_for(request: Request, issued_at: int) -> bool:
+    """서명은 유효한 세션 토큰이라도, 그 발급시각 이후에(이 기기 또는 전체 기기) 로그아웃 기록이
+    있으면 더는 인정하지 않는다."""
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+    all_at = data.get("all_at")
+    if isinstance(all_at, (int, float)) and issued_at <= all_at:
+        return True
+    key = _device_key_of(request)
+    if not key:
+        return False
+    device_at = (data.get("devices") or {}).get(key)
+    return isinstance(device_at, (int, float)) and issued_at <= device_at
+
+
 def _is_device_trusted(request: Request) -> bool:
     """★★★ 실제로 겪은 구멍 - 세션 쿠키가 유효하다고 해서 그 요청을 보낸 기기가 지금도
     신뢰 목록에 있는지는 따로 확인하지 않았다. 그래서 이 기능이 생기기 "전에" 로그인해 둔 쿠키를
@@ -396,8 +486,12 @@ def _is_device_trusted(request: Request) -> bool:
 def _is_authenticated(request: Request) -> bool:
     if _is_local_control(request):
         return True
-    if not _session_token_valid(request.cookies.get(AUTH_COOKIE_NAME)):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not _session_token_valid(token):
         return False
+    issued_at = _session_token_ts(token)
+    if issued_at is not None and _session_revoked_for(request, issued_at):
+        return False  # ★ [2-6] 로그아웃(이 기기 또는 전체 기기) 이후 발급된 적 없는 오래된 토큰.
     return _is_device_trusted(request)
 
 
@@ -997,7 +1091,21 @@ async def confirm_password(body: ConfirmIn, request: Request):
 
 @app.post("/api/logout")
 @api_guard
-async def logout():
+async def logout(request: Request):
+    # ★ [2-6] 쿠키만 지우면 그 값 자체(HMAC 서명)는 여전히 유효해, 미리 빼돌려진 쿠키로는 로그아웃
+    # 후에도 계속 들어올 수 있었다. 이 기기(daytrader_device 쿠키)로 지금까지 발급된 세션은 여기서
+    # 서버 쪽에도 무효로 기록해 둔다.
+    _record_logout(request)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.post("/api/logout/all")
+@api_guard
+async def logout_all(request: Request):
+    """[2-6] 모든 기기에서 로그아웃 - 기기를 잃어버렸거나 낯선 세션이 의심될 때 쓴다."""
+    _record_logout_all_devices()
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return resp
