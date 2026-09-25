@@ -342,10 +342,52 @@ def test_idle_timeout() -> None:
         S._idle_cache.update(orig)
 
 
+def test_first_run_default_password() -> None:
+    print("\n== ★ 최초 실행 시 임시 비밀번호 자동 생성 + 원격 로그인 차단 ==")
+    import re
+    import tempfile
+    from daytrader import secrets as sec
+    tmp_path = os.path.join(tempfile.mkdtemp(), "secrets.yaml")
+    orig_path = sec.SECRETS_PATH
+    orig_env_pw = os.environ.pop("DAYTRADER_AUTH_PASSWORD", None)
+    orig_env_flag = os.environ.pop("DAYTRADER_AUTH_PASSWORD_IS_DEFAULT", None)
+    sec.SECRETS_PATH = tmp_path
+    try:
+        check("secrets.yaml 이 비어 있으면 아직 비밀번호 없음", sec.get("auth_password") == "")
+        pw = S._auth_password()
+        check("무작위 숫자 6자리가 생성됨", bool(re.fullmatch(r"\d{6}", pw)))
+        check("생성된 비밀번호가 secrets.yaml 에 저장됨", sec.get("auth_password") == pw)
+        check("생성 직후엔 '임시 비밀번호' 상태로 표시됨", S._is_default_password())
+        check("다시 불러도 같은 값을 씀(재생성 안 됨)", S._auth_password() == pw)
+
+        local_req = make_request()
+        remote_req = make_request(client=("8.8.8.8", 1234))
+        check("★ 임시 비밀번호인 동안 원격 요청은 이 컴퓨터가 아님",
+              S._is_default_password() and not S._is_same_machine(remote_req))
+        check("이 컴퓨터에서 온 요청은 통과 조건을 만족", S._is_default_password() and S._is_same_machine(local_req))
+
+        # 비밀번호를 바꾸면(change_password 가 하는 일과 동일) 더는 "임시 비밀번호"가 아니다.
+        sec.save({"auth_password": "482913", "auth_password_is_default": ""})
+        check("비밀번호를 바꾸면 임시 비밀번호 표시가 사라짐", not S._is_default_password())
+        check("★ 표시가 사라지면 원격 요청도 더는 차단 조건에 걸리지 않음",
+              not (S._is_default_password() and not S._is_same_machine(remote_req)))
+    finally:
+        sec.SECRETS_PATH = orig_path
+        if orig_env_pw is not None:
+            os.environ["DAYTRADER_AUTH_PASSWORD"] = orig_env_pw
+        else:
+            os.environ.pop("DAYTRADER_AUTH_PASSWORD", None)
+        if orig_env_flag is not None:
+            os.environ["DAYTRADER_AUTH_PASSWORD_IS_DEFAULT"] = orig_env_flag
+        else:
+            os.environ.pop("DAYTRADER_AUTH_PASSWORD_IS_DEFAULT", None)
+
+
 def main() -> None:
     for t in (test_session_token, test_host_and_origin, test_confirm_tokens, test_local_control,
               test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
-              test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes, test_idle_timeout):
+              test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
+              test_idle_timeout, test_first_run_default_password):
         t()
     print(f"\n총 {_total}건 중 실패 {len(_failures)}건")
     if _failures:

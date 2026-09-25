@@ -215,9 +215,37 @@ _AUTH_EXEMPT_PREFIXES = ("/api/login/pending/", "/api/admin/")
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
+def _generate_default_password() -> str:
+    """★★★ 실제로 겪은 문제 - 예전엔 secrets.yaml 에 비밀번호가 없으면 하드코딩된
+    "123456"으로 그냥 로그인이 됐다(새로 설치하면 누구나 아는 비밀번호로 열려 있는 셈).
+    이제는 최초 실행 때 무작위 6자리를 지어 저장하고, 콘솔·로그에 한 번 보여 준다.
+    이 임시 비밀번호로 바꾸기 전까지는 원격에서 로그인을 아예 막는다(아래 login() 참고)."""
+    import secrets as pysecrets
+    from daytrader import secrets
+    pw = f"{pysecrets.randbelow(1_000_000):06d}"
+    secrets.save({"auth_password": pw, "auth_password_is_default": "1"})
+    banner = (
+        f"\n{'=' * 60}\n"
+        f"  최초 실행: 임시 로그인 비밀번호는 {pw} 입니다.\n"
+        f"  이 비밀번호는 이 컴퓨터에서만 로그인할 수 있습니다.\n"
+        f"  대시보드에 접속해 반드시 새 비밀번호로 바꿔 주세요.\n"
+        f"{'=' * 60}\n"
+    )
+    print(banner)
+    logging.getLogger(__name__).warning("최초 실행 - 임시 로그인 비밀번호: %s (이 컴퓨터에서만 로그인 가능, 곧 변경 필요)", pw)
+    return pw
+
+
 def _auth_password() -> str:
     from daytrader import secrets
-    return secrets.get("auth_password") or DEFAULT_AUTH_PASSWORD
+    return secrets.get("auth_password") or _generate_default_password()
+
+
+def _is_default_password() -> bool:
+    """★ 사용자가 아직 최초 생성된 임시 비밀번호를 그대로 쓰고 있는가.
+    (더는 하드코딩된 "123456"과 비교하지 않는다 - 이제 기본값도 설치마다 무작위다.)"""
+    from daytrader import secrets
+    return bool(secrets.get("auth_password_is_default"))
 
 
 def _auth_session_secret() -> str:
@@ -568,7 +596,7 @@ async def auth_check(request: Request):
     authed = _is_authenticated(request)
     out = {"authenticated": authed, "idle_minutes": _session_idle_seconds() // 60}
     if authed:
-        out["default_password"] = _same(_auth_password(), DEFAULT_AUTH_PASSWORD)
+        out["default_password"] = _is_default_password()
     return out
 
 
@@ -626,6 +654,15 @@ def _check_password_or_raise(request: Request, password: str) -> None:
 @app.post("/api/login")
 @api_guard
 async def login(body: LoginIn, request: Request):
+    # ★★★ 최초 실행으로 만들어진 임시 비밀번호가 아직 그대로라면, 그 값이 무작위라 해도
+    # 원격에서는 아예 로그인을 받지 않는다 - 콘솔에 뜬 값을 어깨너머로 보거나 관리자가
+    # 실수로 남에게 전달했을 수도 있으니, 비밀번호를 바꾸기 전까지는 이 컴퓨터 앞이 아니면
+    # 통과시키지 않는 것이 안전하다(_is_same_machine 은 다른 원격 우회 방어와 같은 기준).
+    if _is_default_password() and not _is_same_machine(request):
+        raise HTTPException(
+            status_code=403,
+            detail="아직 최초 실행 때 만들어진 임시 비밀번호입니다. 이 컴퓨터에서 대시보드에 접속해 먼저 비밀번호를 바꿔 주세요.",
+        )
     _check_password_or_raise(request, body.password)
     from daytrader import devices
     ip = _login_client_key(request)  # 이제 식별에는 안 쓴다 - 관리자 화면에 보여줄 참고 정보로만.
@@ -849,7 +886,9 @@ async def change_password(body: AuthPasswordIn, request: Request):
         raise HTTPException(status_code=400, detail="비밀번호는 숫자 6자리여야 합니다.")
     if _weak_password(pw):
         raise HTTPException(status_code=400, detail="너무 쉬운 비밀번호입니다(같은 숫자 반복·연속 숫자·기본값 불가). 다른 6자리를 골라 주세요.")
-    secrets.save({"auth_password": pw})
+    # ★ 사용자가 직접 고른 비밀번호이니, 최초 실행 때의 "임시 비밀번호" 딱지를 뗀다
+    # (이게 남아 있으면 login() 이 계속 원격 로그인을 막는다).
+    secrets.save({"auth_password": pw, "auth_password_is_default": ""})
     resp = JSONResponse({"ok": True})
     _set_session_cookie(resp, request)  # ★ 방금 바꾼 사람까지 로그아웃되면 안 되니 새 쿠키를 바로 심어 준다.
     return resp
@@ -2578,7 +2617,7 @@ def get_integrations():
     # 그대로 쓰고 있는지만 알려준다. secrets.yaml 에 값이 저장돼 있는지가
     # 아니라 "지금 유효한 비밀번호가 기본값과 같은가"를 봐야 한다 -
     # 사용자가 굳이 123456 을 다시 입력해 저장해도 여전히 기본값이다.
-    auth = {"is_default_password": _auth_password() == DEFAULT_AUTH_PASSWORD}
+    auth = {"is_default_password": _is_default_password()}
     return {"toss": toss, "telegram": telegram, "bithumb": bithumb, "llm": llm, "auth": auth}
 
 
