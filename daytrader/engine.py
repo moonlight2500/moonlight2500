@@ -532,6 +532,23 @@ class Engine:
         if peak_changed:
             self.state.save()
 
+    def _server_oco_fill_estimate(self, symbol: str, pos, last_price: float) -> dict:
+        """OCO 취소가 실패했는데 oco_is_open() 이 False 여서(취소하려던 사이 이미
+        체결됨) 서버 체결로 보고 내부 정리할 때, 실제 체결가를 최대한 찾는다.
+        safety.reconcile() 의 ghost 포지션 처리와 같은 방식(최근 SELL 체결
+        이력 조회)이고, 못 찾으면 추정임을 표시하고 마지막 시세로 대신한다.
+        """
+        price = None
+        try:
+            from daytrader.safety import _find_recent_sell_price
+            price = _find_recent_sell_price(self.client, symbol)
+        except Exception:
+            price = None
+        estimated = price is None
+        if price is None:
+            price = last_price
+        return {"averageFilledPrice": price, "filledQuantity": pos.quantity, "_estimated": estimated}
+
     def _poll_server_oco(self, prices: dict) -> None:
         """live + use_conditional_oco 일 때만 부른다. conditional_orders() 한 번으로
         전체 조건부 주문을 받아 색인한다.
@@ -568,13 +585,24 @@ class Engine:
 
         if server_filled is None and pos.oco_id:
             cancelled = self.broker.cancel_oco(pos.oco_id)
-            if not cancelled and self.broker.oco_is_open(pos.oco_id):
-                return  # 서버에 주문이 살아있다 - 여기서 또 팔면 이중 매도가 된다.
+            if not cancelled:
+                if self.broker.oco_is_open(pos.oco_id):
+                    return  # 서버에 주문이 살아있다 - 여기서 또 팔면 이중 매도가 된다.
+                # ★★★ 실제로 겪은 버그 - 취소는 실패했는데 oco_is_open() 이
+                # False 라는 건 "취소하려는 사이 이미 체결돼 취소할 대상이
+                # 없어졌다"는 뜻이다(_poll_server_oco 가 다음 주기에 잡기 전에
+                # 다른 청산 기법이 먼저 이 함수를 부른 경쟁 상태). 예전엔 그대로
+                # 아래 broker.sell() 로 내려가 팔 수량이 0이라 매도 자체가
+                # 실패하고, 매도 실패로 return 해 버려 포지션이 영원히 지워지지
+                # 않는 유령 포지션이 됐다. 이미 서버에서 체결된 것으로 보고,
+                # 실제 체결가를 최대한 찾아(계좌 대조와 같은 방식) 내부적으로
+                # 정리한다 - 다시 팔려 하지 않는다.
+                server_filled = self._server_oco_fill_estimate(symbol, pos, last_price)
 
         if server_filled is not None:
             exit_price = server_filled.get("averageFilledPrice") or server_filled.get("price") or last_price
             qty = server_filled.get("filledQuantity") or pos.quantity
-            estimated = False
+            estimated = bool(server_filled.get("_estimated"))
             headline = "서버 OCO 체결"
             technique = "fixed"
             narrative = "증권사 서버에 걸어둔 손절/익절 주문이 먼저 체결되었습니다."

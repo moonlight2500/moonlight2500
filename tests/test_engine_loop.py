@@ -733,6 +733,78 @@ def test_rescreen_info_tells_next_time() -> None:
           bool(snap.get("rescreen", {}).get("next_at")), str(snap.get("rescreen")))
 
 
+# ━━ OCO 취소 경쟁 상태 (취소하려는 사이 이미 체결됨) ━━━━━━━━━━━━━━━━━━━━━
+
+def test_close_position_survives_oco_just_filled_race() -> None:
+    """★★★ 실제로 겪은 버그 - cancel_oco() 가 실패했는데 oco_is_open() 도
+    False 면 "취소하려는 사이 서버에서 이미 체결됐다"는 뜻이다(다음
+    _poll_server_oco 주기가 돌기 전에 다른 청산 기법이 먼저 _close_position()
+    을 부른 경쟁 상태). 예전엔 이 경우도 그대로 broker.sell() 을 불러 팔
+    수량이 0이라 매도가 실패하고, 매도 실패로 return 해 버려 포지션이
+    영원히 지워지지 않는 유령 포지션이 됐다.
+    """
+    print("\n== OCO 취소 경쟁 상태(취소하려는 사이 이미 체결됨) - 유령 포지션 방지 ==")
+    from types import SimpleNamespace
+
+    from daytrader.broker import Fill, Position
+    from daytrader.clock import SimClock
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.simulator import SimClient
+    from daytrader.timeutil import now_kst
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "sim"
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        clock = SimClock(start="10:00", speed=1, day="2026-09-04")
+        eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
+
+        symbol = "005930"
+        pos = Position(
+            symbol=symbol, name="삼성전자", theme="t", quantity=10, entry_price=70000,
+            entry_time=now_kst(), peak_price=71000, oco_id="oco-1", entry_volume=0,
+            verdict_id=None, why="", technique="breakout",
+        )
+        eng.state.positions[symbol] = pos
+
+        class _OcoJustFilledBroker:
+            """cancel_oco() 는 실패(False)하고 oco_is_open() 도 False(이미
+            없어짐=체결됨)를 돌려주는 상황을 재현한다. 실제 브로커라면 이
+            상태에서 sell() 을 불러도 팔 수량이 0이라 반드시 실패한다."""
+
+            def __init__(self):
+                self.sell_called = False
+
+            def cancel_oco(self, oco_id):
+                return False
+
+            def oco_is_open(self, oco_id):
+                return False
+
+            def sell(self, *a, **kw):
+                self.sell_called = True
+                return Fill(
+                    ok=False, symbol=a[0], side="SELL", quantity=0, price=0.0, order_id=None,
+                    reason="매도 가능 수량이 없습니다.", fatal=False, price_estimated=False,
+                )
+
+        fake_broker = _OcoJustFilledBroker()
+        eng.broker = fake_broker
+
+        verdict = SimpleNamespace(technique="trailing", headline="추적 손절", id=None, narrative="n")
+        eng._close_position(pos, verdict, 71000.0)
+
+        check("★sell() 을 다시 부르지 않음(이미 서버 체결로 처리)", not fake_broker.sell_called)
+        check("★유령 포지션으로 남지 않고 정상적으로 정리됨", symbol not in eng.state.positions)
+        check("거래 기록이 남음", len(eng.state.closed) == 1 and eng.state.closed[0]["symbol"] == symbol)
+        check(
+            "실제 체결가를 못 찾으면 추정으로 표시하고 마지막 시세를 씀",
+            eng.state.closed[0]["estimated"] is True and eng.state.closed[0]["exit"] == 71000.0,
+            str(eng.state.closed[0]),
+        )
+
+
 # ━━ 일일 손실 한도 (평가손실 포함) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_daily_loss_limit_includes_unrealized() -> None:
@@ -860,6 +932,7 @@ def main() -> None:
         test_runner_running_flag_after_stop, test_after_market_no_positions_waits_for_next_open,
         test_pnl_curve_includes_held_positions, test_symbol_curves_sum_to_total, test_rescreen_info_tells_next_time,
         test_max_positions_enforced_across_scored_candidates, test_daily_loss_limit_includes_unrealized,
+        test_close_position_survives_oco_just_filled_race,
     ]
     for t in tests:
         t()
