@@ -1,0 +1,45 @@
+name: Tests
+
+# [5-3] 오프라인 테스트(tests/test_*.py)를 push·PR마다 두 OS에서 돌린다.
+# tests/ui_smoke.py 는 이 glob(test_*.py)에 안 걸려 여기서 실행되지 않는다 -
+# Playwright 브라우저를 따로 설치하지 않았으므로(playwright install 생략),
+# 돌아가더라도 "크로미움 실행 파일을 찾지 못해 건너뜁니다" 메시지와 함께
+# 스스로 건너뛴다(exit 0) - 그래도 이 워크플로에서는 아예 안 부른다.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests/test_*.py
+        shell: bash
+        run: |
+          status=0
+          for f in tests/test_*.py; do
+            echo "::group::$f"
+            if ! python "$f"; then
+              echo "FAIL $f"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
