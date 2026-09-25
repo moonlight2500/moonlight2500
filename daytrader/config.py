@@ -938,6 +938,25 @@ def validate(cfg: Config) -> None:
     if not (1 <= cfg.exit.force_close_deadline_min <= 20):
         raise ValueError("exit.force_close_deadline_min 은 1~20 사이여야 합니다.")
 
+    # ★★★ 실제로 겪을 뻔한 사고 - force_close_time 이후 force_close_deadline_min
+    # 분의 유예를 두고 강제청산을 시도하는데, 그 유예가 15:20 단일가(종가) 매매
+    # 시작 시각을 넘기면 이미 접속성 매매(연속경쟁매매)가 끝난 뒤라 지정가/시장가
+    # 강제청산 주문이 정상적으로 체결되지 않는다. 유예가 끝나는 시각이 반드시
+    # 15:19까지여야 한다(15:20부터는 단일가 매매 - 그 전에 끝나야 한다).
+    _force_close_end_min = (
+        cfg.exit.force_close_time.hour * 60 + cfg.exit.force_close_time.minute
+        + cfg.exit.force_close_deadline_min
+    )
+    if _force_close_end_min > 15 * 60 + 19:
+        _end_h, _end_m = divmod(_force_close_end_min, 60)
+        raise ValueError(
+            f"exit.force_close_time({cfg.exit.force_close_time.strftime('%H:%M')})"
+            f" + force_close_deadline_min({cfg.exit.force_close_deadline_min}분)이"
+            f" {_end_h:02d}:{_end_m:02d}에 끝나 15:20 단일가(종가) 매매 시작 전(15:19까지)에"
+            " 강제청산을 마치지 못합니다. force_close_time 을 앞당기거나"
+            " force_close_deadline_min 을 줄이세요."
+        )
+
     if not (1 <= cfg.live.degrade_after_failures <= 20):
         raise ValueError("live.degrade_after_failures 는 1~20 사이여야 합니다.")
     if not (1 <= cfg.live.degrade_halt_minutes <= 60):

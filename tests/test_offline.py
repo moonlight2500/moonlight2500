@@ -141,6 +141,26 @@ def section_config_validate() -> None:
     check("주간<일일 거부", not try_load(_mutate_weekly))
     check("★알 수 없는 키 거부", not try_load(lambda r: r["risk"].__setitem__("없는키", 1)))
 
+    # ★★★ 실제로 겪을 뻔한 사고 - force_close_time + force_close_deadline_min 유예가
+    # 15:20 단일가(종가) 매매 시작을 넘기면 강제청산 주문이 정상적으로 접속성
+    # 매매 시간에 들어가지 못한다. 15:19까지 끝나야 한다.
+    check(
+        "★강제청산 유예가 15:20 단일가 시작을 넘기면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("force_close_deadline_min", 15)),  # 15:10+15분=15:25
+    )
+
+    def _mutate_boundary_ok(r):
+        r["exit"]["force_close_time"] = "15:10"
+        r["exit"]["force_close_deadline_min"] = 9  # 정확히 15:19에 끝남 - 경계값은 통과해야 한다.
+
+    check("15:19에 정확히 끝나면 통과(경계값)", try_load(_mutate_boundary_ok))
+
+    def _mutate_boundary_fail(r):
+        r["exit"]["force_close_time"] = "15:11"
+        r["exit"]["force_close_deadline_min"] = 9  # 15:20에 끝남 - 단일가 시작 시각과 겹쳐 거부되어야 한다.
+
+    check("15:20에 끝나면 거부(단일가 시작과 겹침)", not try_load(_mutate_boundary_fail))
+
 
 # ━━ 지표 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
