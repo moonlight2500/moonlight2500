@@ -174,6 +174,9 @@ class Engine:
         # ★ 종목별 당일 세션 누적 VWAP·고가(3-2). {symbol: {vwap_num, vwap_den, high, last_ts}}.
         #   _rollover_if_new_day() 에서 날짜가 바뀔 때 함께 비운다.
         self._session_stats: dict = {}
+        # ★ 종목별 전일 고가·저가 캐시(3-3, volatility_breakout 용). 장중에 어제
+        #   일봉이 바뀔 리 없어 심볼당 하루 한 번만 조회한다. 날짜가 바뀌면 비운다.
+        self._prev_day_cache: dict = {}
 
         self.pnl_curve: list = []
         self.equity_curve: list = []
@@ -443,6 +446,32 @@ class Engine:
         v = st["vwap_num"] / st["vwap_den"] if st["vwap_den"] else float("nan")
         h = st["high"] if st["high"] != float("-inf") else float("nan")
         return v, h
+
+    def _prev_day_range(self, symbol: str) -> tuple:
+        """전일(직전 거래일) 실제 고가·저가(3-3). volatility_breakout 기법이
+        '봉을 반으로 나눈 근사' 대신 실제 전일 레인지를 쓸 수 있도록 일봉
+        2개를 받아 온다. 오늘 자 일봉이 아직 미완성으로 같이 오더라도(대부분의
+        일봉 API 가 그렇다) 마지막 봉은 오늘, 그 앞이 전일이라고 보고 뒤에서
+        두 번째를 쓴다(해외주식 엔진의 day_change 필터와 같은 관례).
+        장중에 어제 일봉이 바뀔 리 없으니 심볼당 하루 한 번만 조회해 캐시한다.
+        """
+        cached = self._prev_day_cache.get(symbol)
+        if cached is not None:
+            return cached
+        try:
+            rows = self.client.candles(symbol, "1d", 2)
+            bars = [Bar.from_api(r) for r in (rows or []) if isinstance(r, dict)]
+        except Exception:
+            bars = []
+        if len(bars) >= 2:
+            prev = bars[-2]
+            result = (prev.high, prev.low)
+        elif len(bars) == 1:
+            result = (bars[-1].high, bars[-1].low)  # 상장 첫날 등 - 그거라도 쓴다
+        else:
+            result = (float("nan"), float("nan"))
+        self._prev_day_cache[symbol] = result
+        return result
 
     def _entry_bars(self, symbol: str, count: int = 60):
         """★ 진입 판정에서 봉을 읽는 모든 곳은 반드시 이걸 거친다.
@@ -768,6 +797,8 @@ class Engine:
             window=self._window, kr_session=True,
             session_vwap=session_vwap, session_high=session_high,
         )
+        if "volatility_breakout" in self.cfg.strategy.entry_order:
+            ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(symbol)
         try:
             winner, _ = self.playbook.evaluate_entry(entry_bars, ctx)
         except Exception:
@@ -1022,6 +1053,8 @@ class Engine:
                 window=self._window, kr_session=True,
                 session_vwap=session_vwap, session_high=session_high,
             )
+            if "volatility_breakout" in self.cfg.strategy.entry_order:
+                ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(cand.symbol)
 
             winner, all_verdicts = self.playbook.evaluate_entry(bars, ctx)
             self.candidate_verdicts[cand.symbol] = all_verdicts
@@ -1361,6 +1394,7 @@ class Engine:
             self.candidate_verdicts = {}
             self._last_verdicts = {}
             self._session_stats = {}
+            self._prev_day_cache = {}
             self.report = None
             self.equity_curve = []
             self.pnl_curve = []

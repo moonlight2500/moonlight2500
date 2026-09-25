@@ -530,6 +530,10 @@ class OverseasEngine:
         self._auto_watchlist_date: str = ""
         # ★ 잘못된 티커 경고를 매 루프 찍으면 로그가 쓰레기가 된다 - 한 번만.
         self._warned_bad_tickers: set = set()
+        # ★ 종목별 전일 고가·저가 캐시(3-3, volatility_breakout 용).
+        #   {symbol: (날짜문자열, high, low)} - 날짜가 바뀌면 자연히 다시 조회한다
+        #   (_auto_watchlist_date 와 같은 방식 - 별도 롤오버 훅이 필요 없다).
+        self._prev_day_cache: dict = {}
 
         # ★★★ "재빌드·재시작해도 실거래 이력은 API 와 연계해서 실제정보로
         # 업데이트해야 한다"는 요청 - 국내주식 engine.py 의 resume()/
@@ -985,14 +989,43 @@ class OverseasEngine:
             raise RuntimeError(f"{symbol} 시세 응답에 값이 없습니다.")
         return float(price)
 
+    def _prev_day_range(self, symbol: str) -> tuple:
+        """전일(직전 거래일) 실제 고가·저가(3-3). volatility_breakout 기법이
+        '봉을 반으로 나눈 근사' 대신 실제 전일 레인지를 쓸 수 있게 해 준다.
+        ★ _auto_watchlist_date 와 같은 방식 - 날짜문자열을 캐시 키에 넣어
+        날짜가 바뀌면 자연히 다시 조회되게 한다(별도 롤오버 훅이 필요 없다).
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        cached = self._prev_day_cache.get(symbol)
+        if cached is not None and cached[0] == today:
+            return cached[1], cached[2]
+        try:
+            daily = self._fetch_bars(symbol, count=2, interval="1d")
+        except Exception:
+            daily = []
+        if len(daily) >= 2:
+            prev = daily[-2]
+            result = (prev.high, prev.low)
+        elif len(daily) == 1:
+            result = (daily[-1].high, daily[-1].low)  # 상장 첫날 등 - 그거라도 쓴다
+        else:
+            result = (float("nan"), float("nan"))
+        self._prev_day_cache[symbol] = (today, result[0], result[1])
+        return result
+
     def _make_ctx(self, symbol: str, name: str, now) -> SimpleNamespace:
         # ★ 테마 관련 필드는 아예 안 채운다 - getattr(ctx, key, 기본값) 로
         # 안전하게 처리되어(원래 국내주식 코드) 없어도 죽지 않고, 테마
         # 의존 기법만 자연히 통과 못 한다.
-        return SimpleNamespace(
+        ctx = SimpleNamespace(
             symbol=symbol, name=name, theme="해외주식", now=now,
             prev_verdict=None, prev_verdicts=[], held_minutes=0, force_close=False,
         )
+        # ★ 해외주식은 국내주식과 entry_order 를 공유한다(cfg.strategy.entry_order) -
+        # volatility_breakout 이 켜져 있을 때만 일봉을 추가로 조회한다.
+        if "volatility_breakout" in self.cfg.strategy.entry_order:
+            ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(symbol)
+        return ctx
 
     def _cash_available(self) -> float:
         """★★★ 실제로 겪은 버그("'>' not supported between instances of

@@ -1300,15 +1300,22 @@ class VolatilityBreakoutEntry(EntryBase):
     label = "변동성 돌파"
     description = (
         "직전 구간의 변동폭(고가-저가)에 계수 k를 곱한 값을 오늘 시가에 더한 "
-        "목표가를 현재가가 넘으면 매수한다. 봉을 앞뒤 절반으로 나눠 "
-        "'직전 구간 vs 오늘 구간'을 만든다(장 마감이 없는 시장을 고려)."
+        "목표가를 현재가가 넘으면 매수한다. 국내주식·해외주식은 전일(직전 거래일) "
+        "실제 일봉 고가-저가를 '직전 구간'으로 쓴다. 암호화폐는 장 마감이 없는 "
+        "24시간 시장이라 '전일'이라는 경계가 없으므로, 받아 온 봉을 앞뒤 절반으로 "
+        "나눠 '직전 구간 vs 오늘 구간'을 근사한다."
     )
     origin = (
         "Larry Williams 의 변동성 돌파(주식·선물용)를 국내 코인 트레이더들이 "
         "암호화폐에 맞게 응용한 형태 - 학술 검증이 아니라 수개월~1년 단위 "
         "실전 운용 사례로 뒷받침된 '커뮤니티 검증' 기법입니다."
     )
-    standard = "표준 k=0.5. [설정] → 암호화폐 섹션의 '변동성 돌파 계수(k)' 값을 그대로 씁니다."
+    standard = (
+        "표준 k=0.5. [설정] → 암호화폐 섹션의 '변동성 돌파 계수(k)' 값을 그대로 씁니다. "
+        "직전 구간 고가·저가는 엔진이 전일 일봉에서 채워 주는 ctx.prev_day_high/"
+        "prev_day_low 가 있으면 그 실제 값을 쓰고(3-3), 없으면(암호화폐, 또는 "
+        "백테스트처럼 이 필드를 안 채워 주는 호출자) 받아 온 봉을 반으로 나눈 근사로 되돌아간다."
+    )
 
     def evaluate(self, bars, ctx) -> Verdict:
         # ★ k 는 기법 파라미터(strategy.params.volatility_breakout.k)를 먼저
@@ -1331,11 +1338,26 @@ class VolatilityBreakoutEntry(EntryBase):
                 inputs={"k": k}, lead=self.description,
             )
 
-        mid = len(bars) // 2
-        prev_chunk, today_chunk = bars[:mid], bars[mid:]
-        prev_high = max(b.high for b in prev_chunk)
-        prev_low = min(b.low for b in prev_chunk)
-        today_open = today_chunk[0].open
+        # ★★★ 3-3 - 원래는 항상 받아 온 봉을 앞뒤 절반으로 나눠 '직전 구간'을
+        # 근사했다. 장 마감이 있는 국내·해외주식은 그럴 필요가 없다 - 엔진이
+        # 전일 일봉에서 실제 고가·저가를 ctx.prev_day_high/prev_day_low 로
+        # 채워 주면 그 실제 값을 쓴다. 암호화폐(24시간 시장이라 '전일'이 없음)나
+        # 이 필드를 안 채워 주는 호출자(백테스트 등)만 기존 근사로 되돌아간다.
+        prev_day_high = getattr(ctx, "prev_day_high", None)
+        prev_day_low = getattr(ctx, "prev_day_low", None)
+        has_daily_range = (
+            prev_day_high is not None and prev_day_low is not None
+            and not isnan(prev_day_high) and not isnan(prev_day_low)
+        )
+        if has_daily_range:
+            prev_high, prev_low = prev_day_high, prev_day_low
+            today_open = bars[0].open
+        else:
+            mid = len(bars) // 2
+            prev_chunk, today_chunk = bars[:mid], bars[mid:]
+            prev_high = max(b.high for b in prev_chunk)
+            prev_low = min(b.low for b in prev_chunk)
+            today_open = today_chunk[0].open
         target = today_open + k * (prev_high - prev_low)
         current_price = bars[-1].close
 
