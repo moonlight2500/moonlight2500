@@ -32,6 +32,10 @@ def check(name: str, cond: bool, extra: str = "") -> None:
 
 def make_cfg(key="gsk_TestKey1234567890abcdefXYZ", ai=True, mode="view", cap=300):
     cfg = load_config(CONFIG_PATH)
+    # ★ news_guard.py 가 하루 호출 수를 state_dir 에 남기게 됐다(재시작 후에도 상한을 지키기
+    # 위해) - 기본 state_dir(레포의 실제 "state" 폴더)을 그대로 쓰면 이 파일의 테스트끼리,
+    # 그리고 여러 번 실행할 때마다 호출 기록이 쌓여 하루 상한 테스트가 서로 간섭한다.
+    cfg.state_dir = tempfile.mkdtemp()
     cfg.groq_api_key = key
     cfg.groq_api_key2 = ""
     cfg.news.ai_filter = ai
