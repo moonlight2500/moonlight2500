@@ -32,16 +32,21 @@ from daytrader.bithumb_broker import (
 from daytrader.orders import OrderBook
 from daytrader.perf_stats import summarize_closed_trades
 from daytrader.playbook import Bar, Playbook
+from daytrader.timeutil import KST
+from daytrader.timeutil import now_kst as _now_kst_aware
 
 log = logging.getLogger(__name__)
 
 
 def _fmt_ts(ts: float) -> str:
     """★ 재개 예정 시각을 사람이 읽는 형식으로. 오늘 안이면 시:분만,
-    날짜가 넘어가면 날짜까지 붙여 헷갈리지 않게 한다."""
+    날짜가 넘어가면 날짜까지 붙여 헷갈리지 않게 한다.
+    ★★★ [1-10] datetime.now()(호스트 로컬 시각)로 비교하면 UTC 호스트에서
+    "오늘"의 경계가 9시간 어긋난다 - timeutil 이 강제하는 KST 기준으로 통일한다.
+    """
     try:
-        dt = datetime.fromtimestamp(ts)
-        if dt.date() == datetime.now().date():
+        dt = datetime.fromtimestamp(ts, tz=KST)
+        if dt.date() == _now_kst_aware().date():
             return dt.strftime("%H:%M")
         return dt.strftime("%m/%d %H:%M")
     except Exception:
@@ -85,8 +90,9 @@ def fetch_top_volume_markets(client, today: str, count: int = 10) -> list:
 
 
 def _closed_today(closed: list, limit: int = 500) -> list:
-    """오늘(로컬 자정 이후)에 청산된 거래. exit_time 은 유닉스 초."""
-    start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    """오늘(KST 자정 이후)에 청산된 거래. exit_time 은 유닉스 초.
+    ★ [1-10] 호스트 로컬 자정이 아니라 KST 자정 기준이어야 한다(위 _fmt_ts 참고)."""
+    start = _now_kst_aware().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     out = [c for c in (closed or []) if (c.get("exit_time") or 0) >= start]
     return out[-limit:]
 

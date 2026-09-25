@@ -1100,6 +1100,67 @@ def test_halt_resumes_when_session_changes() -> None:
     check("세션이 바뀌면(애프터마켓) 쿨다운 시간이 안 지났어도 즉시 재개", info2["halted"] is False, info2)
 
 
+def test_daily_reset_uses_kst_not_host_tz() -> None:
+    """★★★ [1-10] 실제로 겪을 뻔한 버그 - _is_today_ts/_closed_today/
+    _reset_if_new_day 가 datetime.now()(호스트 로컬 시각)로 "오늘"을 가르면,
+    UTC 호스트에서는 한국 시각 오전 9시 이전에도 이미 다음 날로 넘어간 것으로
+    착각해 일일 손실 한도·연속 손절 중단이 장중(KST) 에 조용히 리셋된다.
+    TZ=UTC 로 호스트를 재현하고, "지금"을 KST 새벽 2시로 고정해(UTC 로는
+    아직 전날 17시) 예전 버그라면 자정을 이미 넘겼다고 잘못 보는 경계를 검증한다.
+    """
+    print("\n== ★★★ [1-10] 일일 리셋이 호스트 로컬 자정이 아니라 KST 자정 기준(UTC 호스트) ==")
+    import time as _time
+
+    import daytrader.overseas_engine as oe
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    _time.tzset()
+    orig_now_kst_aware = oe._now_kst_aware
+    try:
+        # ★ "지금"을 KST 2026-01-05 새벽 2시로 고정한다(UTC 로는 2026-01-04 17:00).
+        fixed_now = datetime(2026, 1, 5, 2, 0, tzinfo=oe.KST)
+        oe._now_kst_aware = lambda: fixed_now
+
+        yesterday_kst_2350 = datetime(2026, 1, 4, 23, 50, tzinfo=oe.KST).timestamp()
+        today_kst_0010 = datetime(2026, 1, 5, 0, 10, tzinfo=oe.KST).timestamp()
+
+        check("KST 자정 전(어제 23:50) 청산은 '오늘'이 아님", not oe._is_today_ts(yesterday_kst_2350))
+        check("KST 자정 이후(오늘 00:10) 청산은 '오늘'로 잡힘", oe._is_today_ts(today_kst_0010))
+
+        closed = [
+            {"exit_time": yesterday_kst_2350, "pnl": -100},
+            {"exit_time": today_kst_0010, "pnl": -200},
+        ]
+        today_only = oe._closed_today(closed)
+        check("_closed_today 도 KST 자정 기준으로 정확히 오늘 것만 포함",
+              len(today_only) == 1 and today_only[0]["pnl"] == -200, today_only)
+
+        # ★ OverseasState._reset_if_new_day() 도 같은 헬퍼를 쓴다 - 날짜가
+        # "KST 기준 오늘"로 자리잡아야 하고, 이미 오늘 날짜면 리셋하면 안 된다.
+        d = tempfile.mkdtemp()
+        state = oe.OverseasState(os.path.join(d, "overseas_state.json"))
+        state.date = day_str_of(fixed_now)
+        state.consecutive_losses = 3
+        state._reset_if_new_day()
+        check("이미 KST 오늘 날짜면 연속손절 카운트를 리셋하지 않음", state.consecutive_losses == 3)
+
+        state.date = "2026-01-04"  # KST 로 어제
+        state._reset_if_new_day()
+        check("KST 로 날짜가 바뀌었으면 리셋함", state.consecutive_losses == 0 and state.date == day_str_of(fixed_now))
+    finally:
+        oe._now_kst_aware = orig_now_kst_aware
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        _time.tzset()
+
+
+def day_str_of(dt) -> str:
+    return dt.strftime("%Y-%m-%d")
+
+
 def test_overseas_live_buy_no_double_order_on_timeout() -> None:
     """★★★ [1-5] 실제로 겪을 뻔한 버그 - LiveOverseasBroker.buy()/sell() 이
     client.create_order() 를 직접 불러서, 타임아웃(network-uncertain) 뒤
@@ -1166,7 +1227,7 @@ def main() -> None:
         test_overseas_rejects_non_us_tickers, test_cash_available_survives_none, test_update_peak_survives_none, test_survives_non_dict_api_rows, test_default_watchlist_has_mag7_and_ai_chips, test_state_restore_survives_corrupt_records, test_broker_survives_none_values, test_exit_survives_broken_position_fields,
         test_auto_select_skipped_when_market_closed, test_empty_config_values_fall_back_to_defaults,
         test_us_phase_distinguishes_sessions, test_halt_resumes_when_session_changes,
-        test_overseas_live_buy_no_double_order_on_timeout,
+        test_overseas_live_buy_no_double_order_on_timeout, test_daily_reset_uses_kst_not_host_tz,
     ]
     for t in tests:
         t()

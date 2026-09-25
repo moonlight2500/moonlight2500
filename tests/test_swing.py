@@ -528,6 +528,41 @@ def test_swing_engine_halt_info() -> None:
         check("쿨다운(3시간)이 지나면 재개", not info2["halted"], info2)
 
 
+def test_swing_fmt_ts_uses_kst_not_host_tz() -> None:
+    """★★★ [1-10] swing_engine._fmt_ts 가 datetime.now()(호스트 로컬 시각)로
+    "오늘"을 가르면, UTC 호스트에서는 한국 시각 오전 9시 이전에도 이미 다음
+    날로 넘어간 것으로 착각한다. TZ=UTC 로 호스트를 재현하고 "지금"을 KST
+    새벽 2시로 고정해(UTC 로는 아직 전날 17시) 경계를 검증한다.
+    """
+    print("\n== ★★★ [1-10] swing_engine._fmt_ts 가 KST 자정 기준(UTC 호스트) ==")
+    import time as _time
+
+    import daytrader.swing_engine as se
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    _time.tzset()
+    orig_now_kst = se.now_kst
+    try:
+        fixed_now = se.datetime(2026, 1, 5, 2, 0, tzinfo=se.KST)
+        se.now_kst = lambda: fixed_now
+
+        yesterday_kst_2350 = se.datetime(2026, 1, 4, 23, 50, tzinfo=se.KST).timestamp()
+        today_kst_0010 = se.datetime(2026, 1, 5, 0, 10, tzinfo=se.KST).timestamp()
+
+        check("KST 자정 전(어제 23:50) 은 '오늘' 형식(HH:MM)로 안 찍힘",
+              "/" in se._fmt_ts(yesterday_kst_2350), se._fmt_ts(yesterday_kst_2350))
+        check("KST 자정 이후(오늘 00:10) 는 '오늘' 형식(HH:MM)으로 찍힘",
+              se._fmt_ts(today_kst_0010) == "00:10", se._fmt_ts(today_kst_0010))
+    finally:
+        se.now_kst = orig_now_kst
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        _time.tzset()
+
+
 def test_swing_engine_never_force_closes() -> None:
     print("== SwingEngine 컨텍스트는 절대 force_close=True 를 안 만듦(당일 청산 개념 없음) ==")
     cfg = load_config(CONFIG_PATH)
@@ -553,7 +588,7 @@ def main() -> None:
         test_swing_broker_paper, test_swing_broker_crypto_fractional_quantity,
         test_swing_engine_multi_market_selection, test_passes_swing_filters_week_momentum,
         test_swing_state_roundtrip, test_swing_engine_cash_persists_across_restart, test_swing_engine_halt_info,
-        test_swing_engine_never_force_closes,
+        test_swing_engine_never_force_closes, test_swing_fmt_ts_uses_kst_not_host_tz,
     ):
         t()
     print(f"총 {_total}건 중 실패 {len(_failures)}건")
