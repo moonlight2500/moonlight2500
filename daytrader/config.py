@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import MISSING, dataclass, field, fields
 from datetime import time
 from typing import Any
@@ -716,6 +717,52 @@ def apply_style(cfg: Config) -> None:
             c.max_hold_hours = min(c.max_hold_hours, 3.0)
 
 
+# config.yaml 최상위에 올 수 있는 항목 전부(load_config 의 미확인 항목 검사와
+# server.py 의 POST /api/config 가 둘 다 이 목록 하나를 쓴다 - 두 곳에 따로 적으면
+# 한쪽만 고치고 잊어버리기 쉽다).
+KNOWN_TOP_LEVEL_KEYS = {
+    "mode", "capital", "risk", "screen", "entry", "exit", "strategy",
+    "live", "ui", "simulation", "news", "notify", "overseas", "crypto", "swing", "costs",
+    "themes_file", "state_dir", "log_dir", "account_seq", "sizing",
+}
+
+_UNSAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z]:")  # "C:\..." 같은 윈도우 드라이브 문자
+
+
+def _looks_like_escape(raw_value: str) -> bool:
+    """★★★ 실제로 겪을 수 있는 구멍 - themes_file/state_dir/log_dir 는 config.yaml 에 사용자가
+    적는 "app_dir() 기준 상대경로"인데, os.path.join(base, value) 는 value 가 절대경로면
+    base 를 통째로 무시하고 value 그대로를 돌려준다(파이썬의 흔한 함정). 그래서 절대경로나
+    ".." 를 포함한 값을 여기서 미리 걸러낸다 - 그러지 않으면 설정 화면(POST /api/config)에서
+    이 값을 아무 경로로나 바꿔, 이 프로그램이 상태·로그 파일을 임의의 위치에 쓰거나(덮어쓰기)
+    임의의 위치에서 테마 파일을 읽게 만들 수 있다."""
+    v = str(raw_value).replace("\\", "/").strip()
+    if not v:
+        return True
+    if v.startswith("/") or v.startswith("//"):
+        return True
+    if _UNSAFE_PATH_SEGMENT.match(v):
+        return True
+    if ".." in v.split("/"):
+        return True
+    return False
+
+
+def _safe_user_path(base: str, raw_value: Any, default: str, field_name: str) -> str:
+    """themes_file/state_dir/log_dir 을 base(app_dir()) 밖으로 벗어날 수 없게 만들어 반환한다."""
+    value = raw_value if raw_value is not None else default
+    if not isinstance(value, str) or _looks_like_escape(value):
+        raise ValueError(
+            f"config.yaml 의 {field_name} 값이 올바르지 않습니다: {value!r}. "
+            "절대경로나 상위 폴더(..)는 쓸 수 없습니다 - 프로그램 폴더 밑의 상대경로만 허용됩니다."
+        )
+    resolved = os.path.normpath(os.path.join(base, value))
+    base_norm = os.path.normpath(base)
+    if resolved != base_norm and not resolved.startswith(base_norm + os.sep):
+        raise ValueError(f"config.yaml 의 {field_name} 값이 프로그램 폴더 밖을 가리킵니다: {value!r}")
+    return resolved
+
+
 def load_config(path: str | None = None) -> Config:
     # exe 첫 실행이면 config.yaml·themes.yaml 을 exe 옆으로 먼저 꺼내 놓는다.
     ensure_user_files()
@@ -726,12 +773,7 @@ def load_config(path: str | None = None) -> Config:
     with open(path, "r", encoding="utf-8") as f:
         raw: dict[str, Any] = yaml.safe_load(f) or {}
 
-    known_top = {
-        "mode", "capital", "risk", "screen", "entry", "exit", "strategy",
-        "live", "ui", "simulation", "news", "notify", "overseas", "crypto", "swing", "costs",
-        "themes_file", "state_dir", "log_dir", "account_seq", "sizing",
-    }
-    unknown_top = set(raw.keys()) - known_top
+    unknown_top = set(raw.keys()) - KNOWN_TOP_LEVEL_KEYS
     if unknown_top:
         raise ValueError(f"config.yaml 에 알 수 없는 항목이 있습니다: {', '.join(sorted(unknown_top))}")
 
@@ -749,9 +791,9 @@ def load_config(path: str | None = None) -> Config:
     # ★ exe 로 돌 때 상대경로는 임시 폴더를 가리킨다.
     # themes_file/state_dir/log_dir 을 app_dir() 기준 절대경로로 바꾼다.
     base = app_dir()
-    themes_file = os.path.join(base, raw.get("themes_file", "themes.yaml"))
-    state_dir = os.path.join(base, raw.get("state_dir", "state"))
-    log_dir = os.path.join(base, raw.get("log_dir", "logs"))
+    themes_file = _safe_user_path(base, raw.get("themes_file"), "themes.yaml", "themes_file")
+    state_dir = _safe_user_path(base, raw.get("state_dir"), "state", "state_dir")
+    log_dir = _safe_user_path(base, raw.get("log_dir"), "logs", "log_dir")
 
     cfg = Config(
         mode=raw["mode"],

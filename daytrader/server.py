@@ -23,7 +23,7 @@ from ruamel.yaml.scalarfloat import ScalarFloat
 from ruamel.yaml.scalarint import ScalarInt
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
-from daytrader.config import load_config
+from daytrader.config import KNOWN_TOP_LEVEL_KEYS, load_config
 from daytrader.paths import app_dir, app_path, ensure_user_files, web_dir
 from daytrader.playbook import Playbook
 from daytrader.runner import EngineRunner, EventBus, LogBuffer
@@ -3182,6 +3182,15 @@ def _trading_locks() -> dict:
 @app.post("/api/config", dependencies=[_CONFIRM_SETTINGS])
 @api_guard
 async def post_config(body: dict):
+    # ★ config.yaml 최상위에 올 수 있는 항목만 받는다 - load_config() 도 결국 같은 목록으로
+    # 걸러내지만, 여기서 먼저 막아야 알 수 없는 키(예: 오타·다른 스키마를 노린 조작)가
+    # raw.update(body) 로 병합되기 전에 분명한 400 으로 거절된다.
+    unknown_keys = set(body.keys()) - KNOWN_TOP_LEVEL_KEYS
+    if unknown_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"알 수 없는 설정 항목입니다: {', '.join(sorted(unknown_keys))}",
+        )
     # ★★★ 예전엔 국내주식이 거래 중이면(runner.running) 설정 저장 전체를
     # 막았다 - 암호화폐만 거래 중이고 국내주식은 쉬고 있어도 국내 설정을
     # 못 고치는 등, 실제로 거래 중인 시장과 무관한 설정까지 막혀서

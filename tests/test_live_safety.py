@@ -1139,16 +1139,23 @@ def test_journal_shows_only_trades() -> None:
     import daytrader.server as server
     from daytrader.journal import Journal
 
+    from daytrader import config as config_mod
+
     tmpdir = _tempfile.mkdtemp()
-    state_dir = _tempfile.mkdtemp()
+    state_dir = os.path.join(tmpdir, "state")
     orig_config_path = server.CONFIG_PATH
+    orig_app_dir = config_mod.app_dir
     try:
         server.CONFIG_PATH = os.path.join(tmpdir, "config.yaml")
         shutil.copy(CONFIG_PATH, server.CONFIG_PATH)
+        # ★ [2-3] state_dir 은 이제 app_dir() 밖(절대경로·..)을 가리킬 수 없다 - 여기서는
+        # config.yaml 에는 상대경로("state")만 적고, app_dir() 자체를 이 tmpdir 로 바꿔
+        # 격리한다(실제 서버는 app_dir() 을 바꾸지 않는다 - 테스트 전용 격리 방법이다).
+        config_mod.app_dir = lambda: tmpdir
 
         import yaml
         raw = yaml.safe_load(open(server.CONFIG_PATH, encoding="utf-8"))
-        raw["state_dir"] = state_dir
+        raw["state_dir"] = "state"
         yaml.dump(raw, open(server.CONFIG_PATH, "w", encoding="utf-8"), allow_unicode=True)
 
         j = Journal(state_dir, mode="sim")
@@ -1174,6 +1181,7 @@ def test_journal_shows_only_trades() -> None:
         asyncio.run(scenario())
     finally:
         server.CONFIG_PATH = orig_config_path
+        config_mod.app_dir = orig_app_dir
 
 
 def main() -> None:

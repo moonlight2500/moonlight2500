@@ -445,6 +445,68 @@ def test_idle_timeout() -> None:
         S._idle_cache.update(orig)
 
 
+def test_config_path_traversal_guard() -> None:
+    print("\n== ★ config.yaml 의 state_dir/log_dir/themes_file 경로 탈출 방지 ==")
+    from daytrader import config as C
+    base = os.path.join(os.sep, "app", "daytrader")
+
+    def rejects(value) -> bool:
+        try:
+            C._safe_user_path(base, value, "state", "state_dir")
+            return False
+        except ValueError:
+            return True
+
+    check("절대경로(POSIX)는 거절", rejects("/etc/passwd"))
+    check("윈도우 드라이브 절대경로는 거절", rejects("C:/Windows/System32"))
+    check("UNC 경로(\\\\server\\share)는 거절", rejects("//server/share"))
+    check("상위 폴더 탈출(..)은 거절", rejects("../../etc"))
+    check("중간에 ..가 섞여도 거절", rejects("a/../../b"))
+    check("빈 값은 거절", rejects(""))
+    check("보통 상대경로는 허용", not rejects("state"))
+    check("하위 폴더가 있는 상대경로도 허용", not rejects("data/state"))
+    resolved = C._safe_user_path(base, "state", "state", "state_dir")
+    check("허용된 값은 base 밑으로 정규화되어 반환됨",
+          resolved == os.path.normpath(os.path.join(base, "state")))
+
+    # ★ 실제 config.yaml 을 복사해 state_dir 을 조작한 뒤 load_config() 전체 경로로도 막히는지 확인.
+    import tempfile
+    import yaml as _yaml
+    with open(C.app_path("config.yaml"), "r", encoding="utf-8") as f:
+        raw_cfg = _yaml.safe_load(f)
+    tmp_dir = tempfile.mkdtemp()
+    for bad_value, label in (("../../etc/evil-state", "state_dir"), ("/tmp/evil-log", "log_dir")):
+        raw_cfg2 = dict(raw_cfg)
+        raw_cfg2[label] = bad_value
+        tmp_cfg = os.path.join(tmp_dir, f"bad-{label}.yaml")
+        with open(tmp_cfg, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(raw_cfg2, f, allow_unicode=True)
+        blocked = False
+        try:
+            C.load_config(tmp_cfg)
+        except ValueError:
+            blocked = True
+        check(f"★ config.yaml 의 {label} 에 경로 탈출 값을 넣으면 load_config() 가 거절함: {bad_value!r}", blocked)
+
+
+def test_config_post_rejects_unknown_keys() -> None:
+    print("\n== ★ POST /api/config 는 알려진 최상위 항목만 받음 ==")
+    import asyncio
+    from daytrader.config import KNOWN_TOP_LEVEL_KEYS
+
+    async def call(body):
+        return await S.post_config(body)
+
+    rejected = False
+    try:
+        asyncio.run(call({"state_dir": "state", "not_a_real_setting": {"x": 1}}))
+    except S.HTTPException as exc:
+        rejected = exc.status_code == 400
+    check("★ 알 수 없는 최상위 키가 섞여 있으면 400 으로 거절", rejected)
+    check("state_dir·mode 같은 알려진 키는 목록에 있음",
+          {"state_dir", "log_dir", "themes_file", "mode"} <= KNOWN_TOP_LEVEL_KEYS)
+
+
 def test_first_run_default_password() -> None:
     print("\n== ★ 최초 실행 시 임시 비밀번호 자동 생성 + 원격 로그인 차단 ==")
     import re
@@ -490,7 +552,8 @@ def main() -> None:
     for t in (test_session_token, test_host_and_origin, test_confirm_tokens, test_local_control,
               test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
               test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
-              test_idle_timeout, test_first_run_default_password, test_global_login_lockout_and_persistence,
+              test_idle_timeout, test_config_path_traversal_guard, test_config_post_rejects_unknown_keys,
+              test_first_run_default_password, test_global_login_lockout_and_persistence,
               test_confirm_shares_login_lockout):
         t()
     print(f"\n총 {_total}건 중 실패 {len(_failures)}건")
