@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import json
 import os
 import threading
 import time
@@ -255,32 +254,26 @@ def compose(cfg, headlines: list, market: str = "domestic", price_snapshot: list
 
 def save_review(cfg, market: str, text: str, *, sent_at: float | None = None) -> None:
     """★★★ "정리해서 보낸 내용을 프로그램에서 일자 시간별로 볼수 있게" 요청 - 보낸 메시지를
-    그대로 한 줄(JSON)로 남긴다. server.py 의 /api/review/market/history 가 날짜별로 읽어 준다."""
-    path = os.path.join(cfg.state_dir, REVIEWS_FILE)
+    SQLite(daytrader.db 의 market_reviews 표)에 남긴다. server.py 의
+    /api/review/market/history 가 날짜별로 읽어 준다(db.py 상단 "왜 SQLite 인가" 참고 -
+    예전엔 state_dir/market_reviews.jsonl 한 줄씩이었다)."""
+    from daytrader import db
     os.makedirs(cfg.state_dir, exist_ok=True)
     row = {"market": market, "sent_at": sent_at if sent_at is not None else time.time(), "text": text}
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    db.insert_json_row(cfg.state_dir, "market_reviews", {
+        "market": row["market"], "sent_at": row["sent_at"], "text": row["text"],
+    }, row)
 
 
 def load_reviews(cfg, market: str | None = None, limit: int = 100) -> list:
     """저장된 시장 평가를 최신순으로 돌려준다. market 을 주면 그 시장만 거른다."""
-    path = os.path.join(cfg.state_dir, REVIEWS_FILE)
-    if not os.path.exists(path):
-        return []
-    rows = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
+    from daytrader import db
+    os.makedirs(cfg.state_dir, exist_ok=True)
+    conn = db.get_connection(cfg.state_dir)
     if market:
-        rows = [r for r in rows if r.get("market") == market]
-    rows.sort(key=lambda r: r.get("sent_at", 0), reverse=True)
-    return rows[:limit]
+        sql = "SELECT data FROM market_reviews WHERE market = ? ORDER BY sent_at DESC LIMIT ?"
+        cur = conn.execute(sql, (market, limit))
+    else:
+        sql = "SELECT data FROM market_reviews ORDER BY sent_at DESC LIMIT ?"
+        cur = conn.execute(sql, (limit,))
+    return db.load_data_rows(cur.fetchall())
