@@ -2253,6 +2253,14 @@ main {
   .strip {
     grid-template-columns: repeat(3, 1fr);
   }
+
+  /* ★★ 통합 수정 - .config-actions 는 설정 화면(팀 C)이 팀 A의 모바일
+     하단 고정 탭바 없이 만들어져, "화면 하단"에 붙인 저장·되돌리기
+     버튼이 실제로는 새 하단 탭바(#group-nav) 뒤에 가려졌다(실제로 겪음 -
+     통합 QA). 모바일에서만 하단 탭바 높이만큼 띄운다. */
+  .config-actions {
+    bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* ━━ 모션 최소화 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
