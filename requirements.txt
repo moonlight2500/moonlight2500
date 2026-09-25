@@ -8,6 +8,7 @@ openpyxl>=3.1        # 엑셀(.xlsx) 매매 기록 내보내기
 pystray>=0.19        # 시스템 트레이 아이콘
 Pillow>=10.0         # 트레이 아이콘 이미지 처리
 PyJWT>=2.7           # 빗썸 Open API 2.0 인증(JWT) 토큰 생성
+defusedxml>=0.7      # 뉴스 RSS·네이버 시세 XML 을 안전하게 파싱(엔티티 확장 공격 차단)
 tzdata>=2024.1       # ★ Windows 는 시스템에 IANA 시간대 DB가 없어 zoneinfo("America/New_York")가
                      #   "No time zone found" 로 실패한다(실제로 겪은 문제) - 이 패키지가 데이터를 대신 제공한다.
 

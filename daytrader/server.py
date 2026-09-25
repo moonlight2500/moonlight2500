@@ -15,7 +15,7 @@ from functools import wraps
 from logging.handlers import RotatingFileHandler
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from ruamel.yaml import YAML
@@ -362,6 +362,36 @@ def _admin_token() -> str:
     return os.environ.get("DAYTRADER_LOCAL_TOKEN", "")
 
 
+# ★★ [2-8] 실제로 겪을 수 있는 문제 - 트레이가 /admin 을 열 때 비밀 토큰을 ?token= 으로 URL 에
+# 그대로 실어 보낸다. 그 URL 은 브라우저 방문기록·세션 복원 등에 평문으로 오래 남는다(쿠키와
+# 달리 만료가 없다). 그래서 URL 의 토큰은 "한 번 쓰고 버리는" 부트스트랩으로만 쓰고, 확인되는
+# 즉시 짧게 사는 HttpOnly 쿠키로 바꿔치기한 뒤 토큰이 없는 URL(/admin)로 리다이렉트한다 -
+# 그 뒤로는 주소창·방문기록 어디에도 토큰이 남지 않는다.
+ADMIN_BOOT_COOKIE_NAME = "daytrader_admin_boot"
+ADMIN_BOOT_COOKIE_MAX_AGE = 600  # 10분 - 이 페이지를 열어 둔 채 오래 방치하면 다시 트레이로 열어야 한다.
+
+
+def _sign_admin_boot(ts: int) -> str:
+    import hashlib
+    import hmac as hmac_mod
+    msg = f"admin-boot:{ts}:{_admin_token()}".encode()
+    return hmac_mod.new(_auth_session_secret().encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _admin_boot_cookie_valid(request: Request) -> bool:
+    value = request.cookies.get(ADMIN_BOOT_COOKIE_NAME, "")
+    if not value or "." not in value:
+        return False
+    ts_s, sig = value.split(".", 1)
+    try:
+        ts = int(ts_s)
+    except ValueError:
+        return False
+    if not _same(sig, _sign_admin_boot(ts)):
+        return False
+    return -60 <= (time.time() - ts) <= ADMIN_BOOT_COOKIE_MAX_AGE
+
+
 def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
     """★ 새 기기 승인 관리자 페이지(/admin) - 이중으로 지킨다.
     1) 네트워크: _is_same_machine() - 이 서버가 도는 PC에서 연 브라우저만.
@@ -369,6 +399,8 @@ def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
        트레이가 실행마다 새로 만드는 비밀 토큰까지 같이 요구한다(트레이 메뉴로 열 때만 URL 에 실려
        온다) - _is_local_control 과 같은 토큰을 그대로 쓴다. 트레이 없이 개발용으로 직접 띄운
        경우(토큰이 아예 없음)는 1)만으로 허용한다.
+    토큰이 URL·헤더로 안 왔어도, 위에서 URL 토큰을 한 번 확인하고 심어 둔 부트스트랩 쿠키가
+    아직 유효하면 그것으로도 통과한다(admin_page 가 리다이렉트한 뒤의 /admin 재요청이 이 경로다).
     """
     if not _is_same_machine(request):
         return False
@@ -376,7 +408,9 @@ def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
     if not expected:
         return True
     given = token if token is not None else request.headers.get("x-admin-token", "")
-    return bool(given) and _same(given, expected)
+    if given and _same(given, expected):
+        return True
+    return _admin_boot_cookie_valid(request)
 
 
 def _devices_path() -> str:
@@ -1010,7 +1044,23 @@ def _require_admin_local(request: Request) -> None:
 
 @app.get("/admin")
 async def admin_page(request: Request, token: str = ""):
-    if not _is_admin_local(request, token=token):
+    if token:
+        # ★ [2-8] URL 로 받은 토큰은 검증되는 즉시 소모한다 - 짧게 사는 HttpOnly 쿠키를 심고,
+        # 토큰이 안 보이는 URL 로 리다이렉트한다(그 뒤로 주소창·방문기록에 토큰이 남지 않는다).
+        if not _is_admin_local(request, token=token):
+            return HTMLResponse(
+                "<h3>이 페이지는 서버가 도는 PC에서, 트레이 메뉴의 '새 기기 승인 관리'로 열어야 볼 수 있습니다.</h3>",
+                status_code=403,
+            )
+        resp = RedirectResponse(url="/admin", status_code=302)
+        ts = int(time.time())
+        resp.set_cookie(
+            ADMIN_BOOT_COOKIE_NAME, f"{ts}.{_sign_admin_boot(ts)}",
+            max_age=ADMIN_BOOT_COOKIE_MAX_AGE, httponly=True, samesite="strict",
+            secure=_is_https(request), path="/admin",
+        )
+        return resp
+    if not _is_admin_local(request):
         return HTMLResponse(
             "<h3>이 페이지는 서버가 도는 PC에서, 트레이 메뉴의 '새 기기 승인 관리'로 열어야 볼 수 있습니다.</h3>",
             status_code=403,

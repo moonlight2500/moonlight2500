@@ -14,6 +14,11 @@ import re
 import time
 import xml.etree.ElementTree as ET
 
+# ★ [2-8] 외부(네이버) 응답을 곧이곧대로 xml.etree 로 파싱하면, 조작된 응답의 엔티티 확장
+# 공격("billion laughs")에 그대로 노출된다 - defusedxml 로 그런 확장을 막은 뒤 파싱한다.
+from defusedxml import ElementTree as _DefusedET
+from defusedxml.common import DefusedXmlException as _DefusedXmlException
+
 from daytrader import netutil
 
 log = logging.getLogger(__name__)
@@ -198,9 +203,9 @@ class WebQuoteClient:
 
     def _parse_naver_xml(self, text: str) -> list:
         try:
-            root = ET.fromstring(text)
+            root = _DefusedET.fromstring(text)
             return [item.attrib.get("data", "") for item in root.findall(".//item")]
-        except ET.ParseError:
+        except (ET.ParseError, _DefusedXmlException):
             # XML 파싱 실패 시 정규식 폴백.
             return re.findall(r'data="([^"]+)"', text)
 

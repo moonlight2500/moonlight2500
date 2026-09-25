@@ -22,6 +22,14 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 
+# ★★★ [2-8] xml.etree 는 외부에서 받은 XML 을 곧이곧대로 파싱한다 - 악의적인(또는 흉내 낸) RSS
+# 서버가 "billion laughs"(엔티티 재귀 확장으로 메모리 소진) 같은 조작된 응답을 주면 이 프로그램이
+# 죽거나 매우 느려질 수 있다. defusedxml 은 그런 확장·외부 엔티티 참조를 미리 차단한 뒤 표준
+# ElementTree 로 파싱한다 - fromstring() 호출만 바꾸면 되고 나머지 API(있으니 find/findall 등)는
+# 그대로다.
+from defusedxml import ElementTree as _DefusedET
+from defusedxml.common import DefusedXmlException as _DefusedXmlException
+
 from daytrader import netutil
 from daytrader.timeutil import iso, now_kst, parse_dt
 
@@ -144,12 +152,12 @@ def norm_group(g) -> str:
 
 
 def parse_feed(xml_text: str, source: dict) -> list:
-    """RSS 는 xml.etree 로 파싱한다. 외부 라이브러리를 쓰지 않는다.
+    """RSS 는 defusedxml(내부적으로 xml.etree 를 쓰되 위험한 확장을 차단)로 파싱한다.
     <item> 의 title/link/pubDate/source 만 읽는다.
     """
     try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
+        root = _DefusedET.fromstring(xml_text)
+    except (ET.ParseError, _DefusedXmlException):
         return []
 
     items = []

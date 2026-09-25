@@ -201,6 +201,41 @@ def test_admin_local() -> None:
           S._is_authenticated(make_request(cookies={S.AUTH_COOKIE_NAME: good})))
 
 
+def test_admin_page_exchanges_url_token_for_boot_cookie() -> None:
+    print("\n== ★ [2-8] /admin - URL 의 ?token= 을 한 번 확인한 뒤 짧게 사는 쿠키로 바꿔치기 ==")
+    import asyncio
+    os.environ["DAYTRADER_LOCAL_TOKEN"] = "admin-secret-789"
+    try:
+        req = make_request(client=("127.0.0.1", 1))
+        resp = asyncio.run(S.admin_page(req, token="admin-secret-789"))
+        check("★ 올바른 URL 토큰이면 302 로 리다이렉트(더 이상 URL 에 토큰을 남기지 않음)",
+              resp.status_code == 302 and resp.headers.get("location") == "/admin")
+        set_cookie = resp.headers.get("set-cookie", "")
+        check("쿠키가 HttpOnly 로 심어짐", "HttpOnly" in set_cookie and S.ADMIN_BOOT_COOKIE_NAME in set_cookie)
+
+        # ★ 방금 심어진 쿠키 값을 뽑아 다음 요청에 그대로 실어 보낸다(브라우저가 하는 일과 같다).
+        cookie_val = set_cookie.split(f"{S.ADMIN_BOOT_COOKIE_NAME}=", 1)[1].split(";", 1)[0]
+        req2 = make_request(client=("127.0.0.1", 1), cookies={S.ADMIN_BOOT_COOKIE_NAME: cookie_val})
+        check("★ 부트스트랩 쿠키만으로(URL 토큰 없이) 다시 인증됨", S._is_admin_local(req2))
+
+        bad_token_resp = asyncio.run(S.admin_page(make_request(client=("127.0.0.1", 1)), token="wrong"))
+        check("틀린 URL 토큰은 403(리다이렉트하지 않음)", bad_token_resp.status_code == 403)
+
+        req_remote = make_request(client=("8.8.8.8", 9), cookies={S.ADMIN_BOOT_COOKIE_NAME: cookie_val})
+        check("★ 같은 PC 가 아니면 부트스트랩 쿠키가 있어도 거절", not S._is_admin_local(req_remote))
+
+        tampered = make_request(client=("127.0.0.1", 1), cookies={S.ADMIN_BOOT_COOKIE_NAME: "0.deadbeef"})
+        check("조작된(서명이 틀린) 쿠키는 거절", not S._is_admin_local(tampered))
+
+        import time as _t
+        old_ts = int(_t.time()) - S.ADMIN_BOOT_COOKIE_MAX_AGE - 10
+        expired = make_request(client=("127.0.0.1", 1),
+                                cookies={S.ADMIN_BOOT_COOKIE_NAME: f"{old_ts}.{S._sign_admin_boot(old_ts)}"})
+        check("★ 유효기간(10분)이 지난 쿠키는 거절", not S._is_admin_local(expired))
+    finally:
+        os.environ.pop("DAYTRADER_LOCAL_TOKEN", None)
+
+
 def test_stale_cookie_needs_trusted_device() -> None:
     print("\n== ★ 실제로 겪은 문제: 이 기능이 생기기 전에 발급된 세션 쿠키로 신뢰 안 된 기기가 계속 드나들던 구멍 ==")
     import tempfile
@@ -519,6 +554,42 @@ def test_redaction() -> None:
     check("로그인 비밀번호 숫자는 지우지 않음(다른 숫자를 망가뜨리지 않기 위해)", "482913" in S._redact("주문번호 482913 접수"))
 
 
+def test_market_errors_dont_leak_network_details() -> None:
+    print("\n== ★ [2-8] 시세 조회 실패 메시지가 프록시·호스트 정보를 화면에 흘리지 않음 ==")
+    from daytrader import market
+
+    leaky = "HTTPSConnectionPool(host='proxy.internal.corp', port=8080): Max retries exceeded"
+    short = market._short_error(Exception(leaky), "테스트 조회")
+    check("★ 원본 예외 메시지(호스트명 등)는 화면으로 안 나감", "proxy.internal.corp" not in short and "8080" not in short)
+    check("대신 짧고 고정된 한국어 안내문을 돌려줌", short == "일시적으로 시세를 가져오지 못했습니다.")
+
+    src = open(market.__file__, encoding="utf-8").read()
+    check("market.py 안에 {\"error\": str(exc)} 처럼 예외를 그대로 화면으로 보내는 자리가 없음",
+          '"error": str(exc)' not in src and "{exc}" not in src)
+    check("실패한 조회마다 _short_error() 를 거쳐 감(로그에는 원인이 남고, 화면에는 짧은 문구만 나감)",
+          src.count("_short_error(exc,") >= 10)
+
+
+def test_rss_xml_parsed_with_defusedxml() -> None:
+    print("\n== ★ [2-8] 뉴스·네이버 시세 RSS/XML 파싱이 defusedxml 을 거침 ==")
+    from daytrader import news, webquote
+    check("news.py 가 defusedxml 로 파싱함", "_DefusedET.fromstring" in open(news.__file__, encoding="utf-8").read())
+    check("webquote.py 가 defusedxml 로 파싱함",
+          "_DefusedET.fromstring" in open(webquote.__file__, encoding="utf-8").read())
+    check("requirements.txt 에 defusedxml 이 추가됨",
+          "defusedxml" in open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8").read())
+
+    # ★ "billion laughs" 형태의 엔티티 폭탄을 실제로 넣어 봐도, 예외를 그대로 밖으로 던지지 않고
+    # (defusedxml 이 EntitiesForbidden 을 냄) 빈 결과로 조용히 넘어가는지 확인한다.
+    bomb = (
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>'
+        '<rss><channel><item><title>&lol2;</title></item></channel></rss>'
+    )
+    check("★ 엔티티 확장 공격이 섞인 RSS 를 줘도 news.parse_feed 가 예외 없이 빈 목록을 돌려줌",
+          news.parse_feed(bomb, {"name": "test", "group": "기타"}) == [])
+
+
 def test_app_surface() -> None:
     print("\n== 앱 노출면 ==")
     check("/docs 가 꺼져 있음", S.app.docs_url is None and S.app.redoc_url is None and S.app.openapi_url is None)
@@ -766,9 +837,12 @@ def test_first_run_default_password() -> None:
 
 def main() -> None:
     for t in (test_session_token, test_host_and_origin, test_confirm_tokens, test_local_control,
-              test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
+              test_same_machine, test_admin_local, test_admin_page_exchanges_url_token_for_boot_cookie,
+              test_stale_cookie_needs_trusted_device,
               test_logout_revokes_session_server_side, test_logout_endpoints_call_revocation,
-              test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
+              test_password_and_lockout, test_redaction, test_market_errors_dont_leak_network_details,
+              test_rss_xml_parsed_with_defusedxml,
+              test_app_surface, test_symbol_validation_and_new_routes,
               test_appjs_html_sinks_are_escaped,
               test_idle_timeout, test_config_path_traversal_guard, test_config_post_rejects_unknown_keys,
               test_first_run_default_password, test_global_login_lockout_and_persistence,
