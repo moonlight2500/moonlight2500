@@ -63,8 +63,11 @@
         <span class="sidebar-brand-name">AutoDayTrading</span>
       </div>
     </div>
-    <span class="sidebar-mode-badge" id="sidebar-mode-badge" data-state="idle">
-      <span class="sidebar-mode-badge-label">대기</span>
+    <!-- ★ "대기가 뭘 의미하는거야?" - app.js 의 updateBand() 가 실제 상태에 맞춰
+         라벨·title·aria-label 을 매번 새로 채운다(여기 값은 그 전까지의 자리표시자). -->
+    <span class="sidebar-mode-badge" id="sidebar-mode-badge" data-state="idle" tabindex="0" role="button"
+          title="자동매매 상태 - 서버와 연결을 확인하는 중입니다." aria-label="자동매매 상태: 연결 확인 중">
+      <span class="sidebar-mode-badge-label">연결 확인 중</span>
     </span>
     <nav class="sidebar-nav" id="sidebar-nav" aria-label="화면 목록"></nav>
   </aside>
