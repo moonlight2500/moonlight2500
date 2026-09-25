@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import re
+import shutil
 import threading
 import time
 from dataclasses import asdict
@@ -1284,6 +1285,15 @@ def _write_config_raw(raw) -> None:
             500,
             f"설정을 저장하지 못했습니다(파일 형식이 깨질 뻔해 되돌렸습니다): {exc}",
         )
+
+    # ★ [4-3] 지금 파일을 덮어쓰기 직전, config.yaml.bak 으로 한 벌 남겨 둔다 -
+    # 저장이 검증까지 통과해도 사용자가 원치 않는 값을 저장했을 수 있으니,
+    # 되돌릴 수단은 있어야 한다. 백업 자체가 실패해도 저장은 막지 않는다.
+    if os.path.exists(CONFIG_PATH):
+        try:
+            shutil.copyfile(CONFIG_PATH, f"{CONFIG_PATH}.bak")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("config.yaml.bak 백업 실패(저장은 계속 진행): %s", exc)
 
     os.replace(tmp_path, CONFIG_PATH)
 
