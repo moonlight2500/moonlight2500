@@ -561,6 +561,83 @@ def test_symbol_validation_and_new_routes() -> None:
     check("빗썸 조회 실패 메시지는 마스킹을 거침", "_redact(f\"빗썸 계좌 조회 실패" in src)
 
 
+def test_appjs_html_sinks_are_escaped() -> None:
+    """★ [2-7] web/static/app.js 를 정적으로 훑어, `el(..., { html: `...${x}...` })` 처럼
+    템플릿 리터럴을 그대로 innerHTML 에 꽂는 자리에서, 서버·외부 데이터로 보이는 값이
+    esc()(또는 이미 자체적으로 이스케이프하는 헬퍼) 없이 그대로 끼워지지 않는지 확인한다.
+
+    완벽한 JS 파서는 아니고 휴리스틱이다 - "그 자체가 통째로 `obj.prop` 형태의 멤버
+    접근(선택적으로 `|| "리터럴"` 기본값만 붙은)"인 표현식만 위험하다고 본다. 아이콘
+    헬퍼(_dashIcon 등)·esc()·techBadgeHTML() 처럼 이미 안전을 보장하는 호출로 시작하는
+    표현식과, 숫자만 나오는 length/count 류 프로퍼티는 허용 목록으로 뺀다.
+    """
+    print("\n== ★ [2-7] app.js 의 html: 템플릿 리터럴 - 서버 데이터에 escape 누락 정적 스캔 ==")
+    import re as _re
+
+    app_js_path = os.path.join(ROOT, "web", "static", "app.js")
+    src = open(app_js_path, encoding="utf-8").read()
+
+    # "html:" 뒤에 백틱 템플릿 리터럴이 하나 이상, +로 이어붙여 오는 구간을 통째로 잡는다
+    # (예: `모드: <b>...</b>` + `종목 ...` 처럼 두 조각으로 나뉜 값도 있다).
+    tpl_run_re = _re.compile(r'html:\s*((?:`[^`]*`\s*(?:\+\s*)?)+)')
+    tpl_re = _re.compile(r'`([^`]*)`')
+
+    def extract_exprs(template: str) -> list:
+        """템플릿 문자열 안의 모든 ${...} 를(중첩된 {} 도 균형을 맞춰) 꺼낸다."""
+        exprs = []
+        i, n = 0, len(template)
+        while i < n:
+            j = template.find("${", i)
+            if j == -1:
+                break
+            depth, k = 1, j + 2
+            while k < n and depth > 0:
+                if template[k] == "{":
+                    depth += 1
+                elif template[k] == "}":
+                    depth -= 1
+                k += 1
+            exprs.append(template[j + 2:k - 1])
+            i = k
+        return exprs
+
+    # 이미 안전을 보장하는 호출로 시작하는 표현식(아이콘 헬퍼·esc류·숫자 포맷 헬퍼 등).
+    safe_prefixes = (
+        "esc(", "escAttr(", "techBadgeHTML(", "techDiagramSVG(",
+        "_dashIcon(", "_selIcon(", "_perfIcon(", "_mrevIcon(", "_newsIcon(", "_marketIcon(",
+        "icon(", "infoIcon(", "won(", "signed(", "pct(", "pct0(", "dir(",
+        "_hhmmss(", "_datetime(", "_qty(", "_moneyOf(", "_signedMoneyOf(", "_usdSignedWithKrw(",
+        "window.UI",
+    )
+    # "obj.prop" 또는 "obj.prop.sub" 형태(점이 최소 1개)에, 선택적으로 `|| "문자열"` 기본값만
+    # 붙은 표현식 전체 - 서버 응답 객체의 필드를 escape 없이 그대로 문자열로 꽂는 전형적인 모양.
+    member_chain_re = _re.compile(
+        r'^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\s*\|\|\s*(?:""|\'\'|"[^"]*"|\'[^\']*\'))?$'
+    )
+    # 숫자(개수)만 나오는 프로퍼티는 HTML 로 해석될 수 없으니 안전 - length/count 류는 허용.
+    numeric_suffix_re = _re.compile(r'\.(length|count|size|\w*_count|\w*Count)$')
+
+    violations = []
+    for run_m in tpl_run_re.finditer(src):
+        for m in tpl_re.finditer(run_m.group(1)):
+            for expr in extract_exprs(m.group(1)):
+                e = expr.strip()
+                if not e or any(e.startswith(p) for p in safe_prefixes):
+                    continue
+                base = e
+                lit_default = _re.match(r'^(.*?)\s*\|\|\s*(?:""|\'\'|"[^"]*"|\'[^\']*\')$', e)
+                if lit_default:
+                    base = lit_default.group(1).strip()
+                if numeric_suffix_re.search(base):
+                    continue
+                if member_chain_re.match(e):
+                    line_no = src.count("\n", 0, run_m.start()) + 1
+                    violations.append((line_no, expr))
+
+    check(f"html: 템플릿 리터럴에서 escape 없이 서버 필드를 그대로 꽂는 곳이 없음(검사한 파일: {app_js_path})",
+          not violations, str(violations))
+
+
 def test_idle_timeout() -> None:
     print("== 자리를 비우면 세션 만료(조작 없이 자동 갱신만으로는 연장 안 됨) ==")
     import time as _t
@@ -692,6 +769,7 @@ def main() -> None:
               test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
               test_logout_revokes_session_server_side, test_logout_endpoints_call_revocation,
               test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
+              test_appjs_html_sinks_are_escaped,
               test_idle_timeout, test_config_path_traversal_guard, test_config_post_rejects_unknown_keys,
               test_first_run_default_password, test_global_login_lockout_and_persistence,
               test_confirm_shares_login_lockout, test_notify_test_requires_confirm_for_caller_supplied_creds):

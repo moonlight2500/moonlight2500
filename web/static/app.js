@@ -1629,7 +1629,7 @@
   function renderWatchCard(rows, opts) {
     opts = opts || {};
     const card = el("div", { class: "card" });
-    const h = el("h2", { html: `${_dashIcon("target")} ${opts.title || "감시"} (${rows.length})` });
+    const h = el("h2", { html: `${_dashIcon("target")} ${esc(opts.title || "감시")} (${rows.length})` });
     if (opts.help) h.appendChild(infoIcon(opts.help));
     card.appendChild(h);
     if (!rows.length) {
@@ -3005,7 +3005,7 @@
       const ses = data.session || {};
       const box = el("div", { class: ses.trading === false ? "banner" : "banner warn" });
       if (ses.trading === false && ses.why) {
-        box.appendChild(el("div", { html: `<b>지금은 종목을 선정하지 않습니다 — ${ses.label || ""}</b>` }));
+        box.appendChild(el("div", { html: `<b>지금은 종목을 선정하지 않습니다 — ${esc(ses.label || "")}</b>` }));
         box.appendChild(el("div", { class: "hint", text: ses.why }));
         box.appendChild(el("div", {
           class: "hint",
@@ -3037,7 +3037,7 @@
     // 예전엔 선정 기준 칩 + 요약 + 갱신시각 + 재선정안내가 각각 한 줄씩
     // 차지해 화면 위쪽을 다 먹었다. 결론(요약) 한 줄만 크게 두고, 나머지는
     // 한 줄에 모아 아이콘 뒤로 숨긴다.
-    panel.appendChild(el("div", { html: `<b>${report.summary || ""}</b>`, style: { margin: "var(--s2) 0" } }));
+    panel.appendChild(el("div", { html: `<b>${esc(report.summary || "")}</b>`, style: { margin: "var(--s2) 0" } }));
 
     const metaRow = el("div", {
       class: "hint",
@@ -3958,7 +3958,11 @@
       const card = el("div", { class: "card" });
       const marketLabel = r.market === "overseas" ? "🌍 해외" : "🇰🇷 국내";
       card.appendChild(el("div", { class: "hint", text: `${marketLabel} · ${_datetime(r.sent_at)}` }));
-      card.appendChild(el("div", { html: r.text || "", style: { marginTop: "var(--s2)", whiteSpace: "pre-line" } }));
+      // ★ [2-7] r.text 는 뉴스 헤드라인을 바탕으로 LLM 이 만든 시장 평가 글 - 외부(뉴스 제목)에서
+      // 온 문자열이 결국 이 안에 섞여 들어갈 수 있어 그대로 innerHTML 에 꽂으면 안 된다. esc() 로
+      // 이스케이프하되, 줄바꿈은 문자 그대로 남아 있으니(컨테이너의 white-space: pre-line 이
+      // 그 줄바꿈을 그대로 살려 보여준다) 개행이 없어지지 않는다.
+      card.appendChild(el("div", { html: esc(r.text || ""), style: { marginTop: "var(--s2)", whiteSpace: "pre-line" } }));
       return card;
     };
     const list = el("div", { style: { display: "flex", flexDirection: "column", gap: "var(--s3)" } });
@@ -4135,7 +4139,7 @@
         const statusText = t.alwaysOn ? "항상 켜짐(끌 수 없는 고정 규칙)"
           : onMarkets.length ? `켜짐: ${onMarkets.join("·")}` : "모든 시장에서 꺼짐";
         card.appendChild(el("div", {
-          html: `<b>${t.label}</b> ${techBadgeHTML(t.key, { label: t.alwaysOn ? "고정" : onMarkets.length ? "켜짐" : "꺼짐" })}`,
+          html: `<b>${esc(t.label)}</b> ${techBadgeHTML(t.key, { label: t.alwaysOn ? "고정" : onMarkets.length ? "켜짐" : "꺼짐" })}`,
         }));
         card.appendChild(el("div", { class: "hint", text: statusText }));
         card.appendChild(el("div", { html: techDiagramSVG(t.key) }));
@@ -4169,7 +4173,7 @@
     list.forEach((t) => {
       const tr = el("tr");
       tr.appendChild(el("td", { text: t.market === "crypto" ? "🪙" : "🇰🇷" }));
-      tr.appendChild(el("td", { html: `<b>${t.label}</b> <span class="hint">${t.key}</span>` }));
+      tr.appendChild(el("td", { html: `<b>${esc(t.label)}</b> <span class="hint">${esc(t.key)}</span>` }));
       tr.appendChild(el("td", {
         class: t.enabled ? "rise" : "hint",
         text: t.enabled ? "켜짐" : "꺼짐",
@@ -4205,14 +4209,17 @@
       const card = el("div", { class: "card" });
       card.appendChild(el("div", { html: `<b>${label}</b>` }));
       const modeLabel = MODE_LABEL[m.learning_mode] || m.learning_mode || "-";
-      card.appendChild(el("div", { html: `매매 모델: <b>${modeLabel}</b>` }));
+      card.appendChild(el("div", { html: `매매 모델: <b>${esc(modeLabel)}</b>` }));
       const list = m.bonus || [];
       if (!list.length) {
         card.appendChild(el("div", { class: "hint", text: "표시할 기법이 없습니다." }));
       } else {
         list.forEach((t) => {
           const row = el("div", { style: { margin: "var(--s2) 0" } });
-          row.appendChild(el("div", { html: `${t.label} <b>×${t.multiplier.toFixed(2)}</b>` }));
+          // ★ [2-7] t.multiplier 가 null 이면 .toFixed 호출이 그대로 죽는다(화면 전체가 안 그려짐) -
+          // 숫자가 아니면 "-"로 보여준다. t.label 도 escape 해 서버 값이 마크업으로 해석되지 않게 한다.
+          const multText = typeof t.multiplier === "number" ? `×${t.multiplier.toFixed(2)}` : "-";
+          row.appendChild(el("div", { html: `${esc(t.label)} <b>${multText}</b>` }));
           row.appendChild(el("div", { class: "hint", text: t.why }));
           card.appendChild(row);
         });
@@ -4278,7 +4285,7 @@
           const cards = el("div", { class: "grid-2" });
           enabled.forEach((t) => {
             const card = el("div", { class: "card" });
-            card.appendChild(el("div", { html: `<b>${t.label}</b> ${techBadgeHTML(t.key, { label: t.phase === "entry" ? "진입" : "청산" })}` }));
+            card.appendChild(el("div", { html: `<b>${esc(t.label)}</b> ${techBadgeHTML(t.key, { label: t.phase === "entry" ? "진입" : "청산" })}` }));
             card.appendChild(el("div", { class: "hint", text: t.description }));
             cards.appendChild(card);
           });
@@ -4424,7 +4431,7 @@
         const box = el("div");
         if (sec.lead) box.appendChild(el("div", { text: sec.lead }));
         const ul = el("ul");
-        (sec.items || []).forEach((it) => ul.appendChild(el("li", { html: `<b>${it.head}</b>: ${it.body}` })));
+        (sec.items || []).forEach((it) => ul.appendChild(el("li", { html: `<b>${esc(it.head)}</b>: ${esc(it.body)}` })));
         box.appendChild(ul);
         if (sec.table) {
           const gridBox = el("div");
@@ -4562,14 +4569,14 @@
   function renderSetupStatus(setup) {
     return el("div", {
       class: "card",
-      html: `모드: <b>${MODE_LABELS[setup.mode] || setup.mode}</b> · 테마 ${setup.theme_count}개 · ` +
+      html: `모드: <b>${esc(MODE_LABELS[setup.mode] || setup.mode)}</b> · 테마 ${setup.theme_count}개 · ` +
         `종목 ${setup.symbol_count}개 · API 키: ${setup.has_keys ? "등록됨" : "없음"}`,
     });
   }
 
   function renderConnCheck(diag) {
     const wrap = el("div", { class: "card" });
-    wrap.appendChild(el("div", { html: `<b>접속 방식</b>: ${diag.mode_label || diag.mode || "-"}` }));
+    wrap.appendChild(el("div", { html: `<b>접속 방식</b>: ${esc(diag.mode_label || diag.mode || "-")}` }));
     const gridBox = el("div");
     new DataGrid(gridBox, {
       columns: [
@@ -6301,12 +6308,12 @@
     details.appendChild(el("summary", { html: `자체 최적화안 (${ideas.length}) <span class="hint">— 검증 안 됨</span>` }));
     ideas.forEach((idea) => {
       const card = el("div", { class: "card banner warn", style: { marginTop: "var(--s2)" } });
-      card.appendChild(el("div", { html: `<b>${idea.label}</b> <span class="hint">기반: ${idea.base}</span>` }));
+      card.appendChild(el("div", { html: `<b>${esc(idea.label)}</b> <span class="hint">기반: ${esc(idea.base)}</span>` }));
       card.appendChild(el("div", { text: idea.idea }));
-      card.appendChild(el("div", { html: `<b>왜 자체안인가</b>: ${idea.why}` }));
-      card.appendChild(el("div", { html: `<b>기대</b>: ${idea.expect}` }));
-      card.appendChild(el("div", { html: `<b>확인 방법</b>: ${idea.check}` }));
-      card.appendChild(el("div", { html: `<b>${idea.status}</b>` }));
+      card.appendChild(el("div", { html: `<b>왜 자체안인가</b>: ${esc(idea.why)}` }));
+      card.appendChild(el("div", { html: `<b>기대</b>: ${esc(idea.expect)}` }));
+      card.appendChild(el("div", { html: `<b>확인 방법</b>: ${esc(idea.check)}` }));
+      card.appendChild(el("div", { html: `<b>${esc(idea.status)}</b>` }));
       details.appendChild(card);
     });
     return details;
@@ -6324,7 +6331,7 @@
       // ★ ISO 문자열 그대로("2026-09-09T15:00:00.123456+09:00")는 읽기
       //   어렵다 - 날짜와 시:분:초로 나눠 보여준다.
       const when = String(e.at || "").replace("T", " ").slice(0, 19);
-      row.appendChild(el("div", { html: `<b>${e.action === "apply" ? "반영" : "되돌림"}</b> ${when} (${e.month})` }));
+      row.appendChild(el("div", { html: `<b>${e.action === "apply" ? "반영" : "되돌림"}</b> ${esc(when)} (${esc(e.month)})` }));
       (e.changes || []).forEach((c) => row.appendChild(el("div", { text: `${c.label}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)}` })));
       if (e.action === "apply") {
         row.appendChild(el("button", {
@@ -6509,7 +6516,7 @@
   function renderLabParticipantCard(p) {
     const card = el("div", { class: "card" });
     const head = el("div", { style: { display: "flex", justifyContent: "space-between" } });
-    head.appendChild(el("span", { html: `<b>${p.name}</b>` }));
+    head.appendChild(el("span", { html: `<b>${esc(p.name)}</b>` }));
     head.appendChild(el("span", {
       class: "badge tech",
       style: { cursor: "default", background: p.real ? "var(--rise)" : "var(--card)", color: p.real ? "#fff" : "var(--ink)" },
