@@ -259,6 +259,38 @@ def test_oco_cancel_fail() -> None:
     check("취소 실패 시 oco_is_open() 은 True (안전한 쪽으로)", broker.oco_is_open(oco_id) is True)
 
 
+# ━━ 매수 가능 금액 0원 처리 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_cash_zero_not_treated_as_missing() -> None:
+    """★★★ 실제로 겪은 버그 - `bp.get("cash") or bp.get("buyingPower") or 0` 은
+    cash 가 정확히 0원이어도(정상적으로 다 써서 없는 상태) "없는 값"으로 보고
+    buyingPower 필드로 넘어간다. cash 와 buyingPower 가 다른 값을 담고 있으면
+    0원인 계좌를 매수 가능한 것처럼 잘못 본다. None 과 0 을 구분해야 한다.
+    """
+    print("\n== 매수 가능 금액이 정확히 0원일 때 ==")
+    from daytrader.broker import LiveBroker
+
+    class _BuyingPowerClient:
+        def __init__(self, cash, buying_power):
+            self._cash = cash
+            self._bp = buying_power
+
+        def buying_power(self):
+            return {"cash": self._cash, "buyingPower": self._bp}
+
+    # cash=0(정상적으로 다 썼다) 인데 buyingPower 는 다른(더 큰) 값을 담고 있다.
+    broker = LiveBroker(_live_cfg(), _BuyingPowerClient(0, 5_000_000), _dummy_book())
+    check("★cash=0 이면 buyingPower 로 새지 않고 0을 그대로 씀", broker.cash() == 0, str(broker.cash()))
+
+    # cash 필드가 아예 없으면(None) buyingPower 로 정상적으로 넘어가야 한다.
+    broker2 = LiveBroker(_live_cfg(), _BuyingPowerClient(None, 5_000_000), _dummy_book())
+    check("cash 필드가 없으면 buyingPower 로 대체", broker2.cash() == 5_000_000, str(broker2.cash()))
+
+    # 둘 다 없으면 0.
+    broker3 = LiveBroker(_live_cfg(), _BuyingPowerClient(None, None), _dummy_book())
+    check("둘 다 없으면 0", broker3.cash() == 0, str(broker3.cash()))
+
+
 # ━━ 계좌 대조 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class _FakeState:
@@ -1043,7 +1075,7 @@ def test_journal_shows_only_trades() -> None:
 
 def main() -> None:
     tests = [
-        test_idempotency, test_oco_is_open, test_oco_cancel_fail, test_reconcile,
+        test_idempotency, test_oco_is_open, test_oco_cancel_fail, test_cash_zero_not_treated_as_missing, test_reconcile,
         test_cleanup_orphans, test_preflight, test_degraded_mode, test_never_sell_unowned, test_live_guard,
         test_config_save_locked_per_market, test_paper_mode_is_not_restricted_by_cash,
         test_account_holdings_uses_real_api_regardless_of_engine_mode,
