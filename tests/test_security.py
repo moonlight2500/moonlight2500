@@ -362,6 +362,37 @@ def test_confirm_shares_login_lockout() -> None:
         S._login_state_loaded = False
 
 
+def test_notify_test_requires_confirm_for_caller_supplied_creds() -> None:
+    print("\n== ★ [2-4] /api/notify/test - 호출자가 직접 넣은 토큰·채팅ID 는 재확인이 필요 ==")
+    import asyncio
+    from daytrader import notify as notify_mod
+
+    orig_post_raw = notify_mod._post_raw_sync
+    notify_mod._post_raw_sync = lambda token, chat_id, text: (True, None)  # 실제 텔레그램으로 안 나가게.
+
+    async def call(token, chat_id, extra_headers=None):
+        req = make_request(extra_headers or {}, method="POST")
+        body = S.NotifyTestIn(token=token, chat_id=chat_id)
+        return await S.notify_test(body, req)
+
+    try:
+        blocked = False
+        try:
+            asyncio.run(call("attacker-token", "attacker-chat"))
+        except S.ConfirmRequired as exc:
+            blocked = exc.scope == "settings"
+        check("★ 호출자가 새 토큰·채팅ID 를 직접 넣으면 재확인 없이는 거절됨(임의 목적지로 발송 방지)", blocked)
+
+        S._confirm_tokens["tok-notify-test"] = ("settings", time.time() + 60)
+        try:
+            result = asyncio.run(call("attacker-token", "attacker-chat", {"x-confirm-token": "tok-notify-test"}))
+            check("설정 재확인 토큰을 실으면 통과됨", result.get("ok") is True)
+        finally:
+            S._confirm_tokens.pop("tok-notify-test", None)
+    finally:
+        notify_mod._post_raw_sync = orig_post_raw
+
+
 def test_redaction() -> None:
     print("\n== 오류·로그의 비밀값 마스킹 ==")
     tg = "https://api.telegram.org/bot8719150887:AAF9JAZVWA5F8kRGi4_X5dkx44SlTcm09X8/sendMessage"
@@ -554,7 +585,7 @@ def main() -> None:
               test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
               test_idle_timeout, test_config_path_traversal_guard, test_config_post_rejects_unknown_keys,
               test_first_run_default_password, test_global_login_lockout_and_persistence,
-              test_confirm_shares_login_lockout):
+              test_confirm_shares_login_lockout, test_notify_test_requires_confirm_for_caller_supplied_creds):
         t()
     print(f"\n총 {_total}건 중 실패 {len(_failures)}건")
     if _failures:

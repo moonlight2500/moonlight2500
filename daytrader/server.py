@@ -157,6 +157,12 @@ def api_guard(fn):
                 return await fn(*args, **kwargs)
             except HTTPException:
                 raise
+            except ConfirmRequired:
+                # ★ [2-4] 라우트 dependencies=[...] 가 아니라 함수 본문에서 조건부로
+                # _require_confirm(...)(request) 를 직접 부르는 라우트(예: 호출자가 새
+                # 값을 넣었을 때만 재확인을 요구하는 /api/notify/test)가 있다 - 그대로
+                # 삼켜 500 으로 바꾸면 안 되고, 원래의 403 재확인 응답이 나가야 한다.
+                raise
             except TossApiError as exc:
                 raise HTTPException(status_code=502, detail=_redact(exc))
             except (FileNotFoundError, ValueError) as exc:
@@ -170,6 +176,8 @@ def api_guard(fn):
         try:
             return fn(*args, **kwargs)
         except HTTPException:
+            raise
+        except ConfirmRequired:
             raise
         except TossApiError as exc:
             raise HTTPException(status_code=502, detail=_redact(exc))
@@ -1922,7 +1930,7 @@ async def get_notify():
 
 @app.post("/api/notify/test")
 @api_guard
-async def notify_test(body: NotifyTestIn):
+async def notify_test(body: NotifyTestIn, request: Request):
     """★★ A-26. enabled() 로 판정하면 연습 모드에서는 연결 확인 자체가
     영구히 불가능해진다. 값이 채워졌는지만 본다.
 
@@ -1930,11 +1938,22 @@ async def notify_test(body: NotifyTestIn):
     입력칸은 저장 후 비워진다(저장된 토큰을 화면에 다시 뿌리지 않는다).
     그런데 여기서 빈 값이면 400 을 냈으니, 저장하고 바로 테스트를 누르면
     반드시 실패했다. 입력칸이 비어 있으면 저장된 값으로 시험한다.
+
+    ★★★ [2-4] 실제로 겪을 수 있는 구멍 - 이 API 는 몸체로 받은 토큰·채팅ID 를 그대로 써서
+    서버가 대신 외부(api.telegram.org)로 요청을 보낸다. 세션 쿠키만 있으면(재확인 없이도)
+    호출할 수 있었던 예전 버전은, 탈취된 세션 쿠키 하나로 서버를 시켜 "아무 봇 토큰·채팅 ID"로나
+    메시지를 보낼 수 있는 통로였다(스팸 발송대·서버의 공인 IP 확인용 SSRF 성 악용 등). 저장된
+    값으로 시험할 때는 이미 그 값 자체가 재확인을 거쳐 저장됐으니 그대로 두되, 호출자가 새
+    토큰·채팅ID 를 직접 넣어 시험하려는 경우에는 다른 설정 변경과 같은 수준(재확인 토큰)을 요구한다.
     """
     from daytrader import notify
     cfg = cfg_now()
-    token = (body.token or "").strip() or (cfg.notify.telegram_token or "").strip()
-    chat_id = (body.chat_id or "").strip() or (cfg.notify.telegram_chat_id or "").strip()
+    caller_token = (body.token or "").strip()
+    caller_chat_id = (body.chat_id or "").strip()
+    if caller_token or caller_chat_id:
+        _require_confirm("settings")(request)
+    token = caller_token or (cfg.notify.telegram_token or "").strip()
+    chat_id = caller_chat_id or (cfg.notify.telegram_chat_id or "").strip()
     if not (token and chat_id):
         raise HTTPException(
             400,

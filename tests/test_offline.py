@@ -1498,8 +1498,18 @@ def section_notify_test_uses_saved_values() -> None:
     import asyncio
     import shutil
     import tempfile as _tempfile
+    import time as _t
     from unittest.mock import patch
+    from starlette.requests import Request
     import daytrader.server as server
+
+    def make_req(headers=None) -> Request:
+        hdrs = {k.lower().encode(): str(v).encode() for k, v in (headers or {}).items()}
+        scope = {
+            "type": "http", "method": "POST", "scheme": "http", "path": "/", "query_string": b"",
+            "headers": list(hdrs.items()), "client": ("127.0.0.1", 50000),
+        }
+        return Request(scope)
 
     tmp = _tempfile.mkdtemp()
     orig = server.CONFIG_PATH
@@ -1517,15 +1527,23 @@ def section_notify_test_uses_saved_values() -> None:
             sent = []
             with patch("daytrader.notify._post_raw_sync",
                        side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
-                # ★ 저장 직후 상황 - 입력칸이 비어 있다.
-                result = await server.notify_test(server.NotifyTestIn(token="", chat_id=""))
+                # ★ 저장 직후 상황 - 입력칸이 비어 있다(저장된 값을 쓰므로 [2-4] 재확인도 필요 없다).
+                result = await server.notify_test(server.NotifyTestIn(token="", chat_id=""), make_req())
             check("★★★ 입력칸이 비어도 테스트가 성공함", result.get("ok") is True)
             check("저장된 토큰·채팅ID 를 사용함", sent and sent[0] == ("saved_tok", "999"), str(sent))
 
+            # ★ [2-4] 입력칸에 새 값을 직접 넣어 시험하려면 설정 재확인 토큰이 있어야 한다.
+            server._confirm_tokens["tok-offline-notify-test"] = ("settings", _t.time() + 60)
             sent.clear()
-            with patch("daytrader.notify._post_raw_sync",
-                       side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
-                await server.notify_test(server.NotifyTestIn(token="new_tok", chat_id="111"))
+            try:
+                with patch("daytrader.notify._post_raw_sync",
+                           side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
+                    await server.notify_test(
+                        server.NotifyTestIn(token="new_tok", chat_id="111"),
+                        make_req({"x-confirm-token": "tok-offline-notify-test"}),
+                    )
+            finally:
+                server._confirm_tokens.pop("tok-offline-notify-test", None)
             check("입력칸에 값이 있으면 그것을 우선(저장 전 시험용)",
                   sent and sent[0] == ("new_tok", "111"), str(sent))
 
