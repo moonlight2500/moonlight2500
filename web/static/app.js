@@ -4,6 +4,7 @@
     RealtimeChart, DataGrid, sparkline, animateNumber, conditionBar, evidencePanel, GFMT, fmtTermVal,
     CandleChart, tradeChart,
     CONFIG_SCHEMA, fieldTier, buildField, collectConfig, getPath, setPath, techBadge, techBadgeHTML, loadTechniques,
+    icon,
   } = window.UI;
 
   // ━━ 유틸 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -261,25 +262,26 @@
   // 그때 화면 전체를 고쳐야 한다.
 
   // ★★★ "아이콘도 세련되고 깔끔한 걸로, 심플한 걸로" - 플랫폼마다 다르게 그려지고
-  // 색이 고정된 이모지 대신, currentColor 를 쓰는 얇은 선 아이콘(SVG)으로 바꿨다.
-  // 버튼이 활성/비활성일 때 글자색을 따라 자동으로 같이 바뀌어서 이모지보다 오히려
-  // 상태 표현이 자연스럽다. 하위 탭(sub-nav)의 이모지 접두어도 빼서 텍스트만 남긴다 -
-  // 탭이 많아 한 줄에 여러 개 늘어설 때 이모지가 섞이면 오히려 산만해 보였다.
-  const NAV_ICONS = {
-    trading: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/><polyline points="14 6 21 6 21 13"/></svg>',
-    records: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9z"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
-    improve: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.6" fill="currentColor" stroke="none"/></svg>',
-    settings: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  // 색이 고정된 이모지 대신, ui.js 의 UI.icon() 이 만드는 currentColor 얇은 선
+  // 아이콘(SVG)을 쓴다. 그룹(4개) 은 하단 탭바·사이드바 섹션 아이콘으로,
+  // 각 화면(16개) 은 사이드바 항목 아이콘으로 쓴다.
+  const GROUP_ICON = { Trading: "trading", Records: "records", Improve: "improve", Settings: "settings" };
+  const GROUP_LABEL_KO = { Trading: "매매", Records: "기록", Improve: "개선", Settings: "설정" };
+  const TAB_ICON = {
+    dash: "dashboard", selection: "target", news: "newspaper", market: "globe",
+    perf: "chart", journal: "book", marketreview: "message",
+    about: "info", review: "calendar", lab: "flask", playbook: "layers", rules: "shield", release: "tag",
+    setup: "plug", themes: "hash", config: "sliders",
   };
 
   const NAV = [
-    { group: "Trading", icon: NAV_ICONS.trading, hint: "지금 무슨 일이 일어나고 있는지",
+    { group: "Trading", hint: "지금 무슨 일이 일어나고 있는지",
       tabs: [["dash", "대시보드"], ["selection", "종목 선정"], ["news", "속보"], ["market", "시장"]] },
-    { group: "Records", icon: NAV_ICONS.records, hint: "무엇을 샀고 왜 그랬는지",
+    { group: "Records", hint: "무엇을 샀고 왜 그랬는지",
       tabs: [["perf", "성과"], ["journal", "매매일지"], ["marketreview", "시장 평가"]] },
-    { group: "Improve", icon: NAV_ICONS.improve, hint: "규칙을 이해하고 다듬기",
+    { group: "Improve", hint: "규칙을 이해하고 다듬기",
       tabs: [["about", "소개"], ["review", "월간 리뷰"], ["lab", "실험실"], ["playbook", "매매 기법"], ["rules", "매매원칙"], ["release", "릴리즈 노트"]] },
-    { group: "Settings", icon: NAV_ICONS.settings, hint: "연결과 파라미터",
+    { group: "Settings", hint: "연결과 파라미터",
       tabs: [["setup", "준비·연결"], ["themes", "테마"], ["config", "설정"]] },
   ];
 
@@ -359,16 +361,31 @@
     // ★ 탭이 속한 그룹을 찾아 그룹탭도 함께 활성화한다 - 즐겨찾기·URL
     // 해시로 바로 하위 탭에 진입해도 상위 그룹이 어긋나지 않는다.
     const owningGroup = NAV.find((g) => g.tabs.some(([tid]) => tid === id));
-    if (owningGroup && owningGroup.group !== _activeGroup) {
-      _activeGroup = owningGroup.group;
-      renderGroupNav();
-      renderSubNav();
+    if (owningGroup) {
+      // ★★★ "그룹을 다시 탭하면 그 그룹에서 마지막으로 보던 화면으로" -
+      // 하단 탭바(모바일)가 이 값을 읽어 첫 탭이 아니라 마지막 위치로
+      // 돌아간다. 새로고침 사이엔 안 남아도 된다(세션 안에서만 기억).
+      _lastTabInGroup[owningGroup.group] = id;
+      if (owningGroup.group !== _activeGroup) {
+        _activeGroup = owningGroup.group;
+        renderGroupNav();
+        renderSubNav();
+      }
     }
 
     $$(".sub-nav a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === id));
+    _updateSidebarActive();
     $$("main .panel").forEach((p) => {
       p.style.display = p.dataset.panel === id ? "flex" : "none";
     });
+
+    // ★ 상단바 제목 - 사이드바를 접어도(레일 모드) 지금 어느 화면인지는
+    // 항상 여기서 보인다.
+    const title = $("#topbar-title");
+    if (title && owningGroup) {
+      const tabDef = owningGroup.tabs.find(([tid]) => tid === id);
+      title.textContent = tabDef ? tabDef[1] : id;
+    }
 
     // ★ 탭이 바뀌면 해외주식 통화 토글(#currency-toggle)도 새 탭 기준으로 다시 보이거나
     // 숨는다 - _currencyToggleRelevant() 참고. initCurrencyToggle() 이 아직 버튼을 만들기
@@ -396,44 +413,122 @@
   }
 
   let _activeGroup = null;
+  const _lastTabInGroup = {}; // group -> 그 그룹에서 마지막으로 본 tab id (세션 중에만 기억)
 
   function buildNav() {
+    renderSidebarNav();
     renderGroupNav();
+    initSidebarCollapse();
   }
 
+  // ━━ 사이드바(데스크톱·태블릿) - 16개 화면을 그룹별 섹션으로 전부 펼쳐
+  // 둔다. "많은 스크롤로 보기 불편한 네비게이션 지양" 요청대로, 어느
+  // 화면이든 여기서 한 번만 누르면 간다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  function renderSidebarNav() {
+    const nav = $("#sidebar-nav");
+    if (!nav) return;
+    nav.innerHTML = "";
+
+    const logo = $(".sidebar-brand-logo");
+    if (logo && !logo.innerHTML) logo.innerHTML = icon("trending-up", 16);
+
+    NAV.forEach((g) => {
+      const section = el("div", { class: "sidebar-group" });
+      section.appendChild(el("div", { class: "sidebar-group-label", text: GROUP_LABEL_KO[g.group] || g.group }));
+      g.tabs.forEach(([id, label]) => {
+        const btn = el("button", {
+          type: "button", class: "sidebar-item", "data-tab": id,
+          title: label, "aria-label": label, "aria-current": "false",
+        });
+        btn.appendChild(el("span", { class: "sidebar-item-icon", html: icon(TAB_ICON[id] || "hash", 18) }));
+        btn.appendChild(el("span", { class: "sidebar-item-label", text: label }));
+        btn.addEventListener("click", () => showTab(id));
+        section.appendChild(btn);
+      });
+      nav.appendChild(section);
+    });
+    _updateSidebarActive();
+  }
+
+  function _updateSidebarActive() {
+    $$(".sidebar-item[data-tab]").forEach((b) => {
+      const active = b.dataset.tab === _activeTab;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-current", active ? "page" : "false");
+    });
+  }
+
+  // 데스크톱(≥1024px) 은 기본으로 펼치고, 태블릿(768~1023px) 은 기본으로
+  // 아이콘 레일이다 - 사용자가 접기 버튼을 누르면 그 뒤로는 폭과 무관하게
+  // localStorage 값을 따른다.
+  const SIDEBAR_COLLAPSE_KEY = "ui.sidebarCollapsed";
+
+  function _loadSidebarCollapsed() {
+    try {
+      const saved = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+      if (saved === "1") return true;
+      if (saved === "0") return false;
+    } catch (e) { /* 사생활 보호 모드 등 - 무시 */ }
+    return !window.matchMedia("(min-width: 1024px)").matches;
+  }
+
+  function _applySidebarCollapsed(collapsed) {
+    const shell = $(".app-shell");
+    if (shell) shell.classList.toggle("sidebar-collapsed", collapsed);
+    const btn = $("#sidebar-collapse");
+    if (btn) btn.setAttribute("aria-expanded", String(!collapsed));
+  }
+
+  function initSidebarCollapse() {
+    _applySidebarCollapsed(_loadSidebarCollapsed());
+    const btn = $("#sidebar-collapse");
+    if (!btn) return;
+    if (!btn.innerHTML) btn.innerHTML = icon("chevron-left", 16);
+    if (btn.dataset.bound) return; // buildNav() 는 로그인마다 한 번씩만 불리지만, 혹시 몰라 중복 바인딩을 막는다.
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const shell = $(".app-shell");
+      const next = !(shell && shell.classList.contains("sidebar-collapsed"));
+      _applySidebarCollapsed(next);
+      try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, next ? "1" : "0"); } catch (e) { /* 무시 */ }
+    });
+  }
+
+  // ━━ 하단 탭바(모바일) - 그룹 4개만. 탭하면 그 그룹에서 마지막으로 보던
+  // 화면으로 돌아간다(처음이면 그룹의 첫 화면). ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   function renderGroupNav() {
-    const groupNav = $(".group-nav");
+    const groupNav = $("#group-nav");
     if (!groupNav) return;
     groupNav.innerHTML = "";
 
     NAV.forEach((g) => {
       const btn = el("button", {
-        type: "button", class: "group-tab", title: g.hint,
+        type: "button", class: "group-tab", title: g.hint, "aria-label": g.hint,
       });
-      // ★ 알약형 가로 버튼(코드·라벨을 한 줄로)에서, 아이콘이 위·라벨이
-      // 아래인 타일 구조로 바꿨다 - 앱 런처/모바일 탭바에 가까운 인상을
-      // 주기 위한 재디자인 요청에 따른 것이다.
-      btn.appendChild(el("span", { class: "group-tab-icon", html: g.icon || "" }));
-      btn.appendChild(el("span", { class: "group-tab-label", text: g.group }));
+      btn.appendChild(el("span", { class: "group-tab-icon", html: icon(GROUP_ICON[g.group] || "hash", 20) }));
+      btn.appendChild(el("span", { class: "group-tab-label", text: GROUP_LABEL_KO[g.group] || g.group }));
       btn.addEventListener("click", () => {
         // ★ 그룹 활성화는 showTab() 안에서 한 곳에서만 처리한다 - 여기서
         // 미리 _activeGroup 을 바꿔버리면 showTab() 이 "이미 그 그룹에
         // 있다"고 오판해서, 아래 설정 잠금 재확인이 걸리지 않는다.
-        showTab(g.tabs[0][0]);
+        showTab(_lastTabInGroup[g.group] || g.tabs[0][0]);
       });
       groupNav.appendChild(btn);
     });
 
-    // ★ 활성 그룹 표시는 여기서 한 번에 - iOS 세그먼트 컨트롤처럼 선택된
-    // 것만 카드 배경 + 그림자를 준다.
     const activeIdx = NAV.findIndex((g) => g.group === _activeGroup);
     Array.from(groupNav.children).forEach((btn, i) => {
       btn.classList.toggle("active", i === activeIdx);
+      btn.setAttribute("aria-current", i === activeIdx ? "page" : "false");
     });
   }
 
+  // ━━ 하위 탭 칩(모바일) - 지금 그룹 안의 다른 화면들을 가로로 미는 알약
+  // 한 줄로. _activeTabIs() 등 다른 코드가 ".sub-nav a[data-tab]" 를 그대로
+  // 찾으므로(아래 ~2280줄 부근), 데스크톱에서 숨겨도(CSS) 이 요소 자체는
+  // 계속 만든다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   function renderSubNav() {
-    const subNav = $(".sub-nav");
+    const subNav = $("#sub-nav");
     if (!subNav) return;
     subNav.innerHTML = "";
     const group = NAV.find((g) => g.group === _activeGroup);
@@ -447,6 +542,8 @@
       });
       subNav.appendChild(a);
     });
+    // 탭이 하나뿐인 그룹은 칩이 있어 봐야 고를 게 없다 - CSS 가 숨긴다.
+    subNav.classList.toggle("single-tab", group.tabs.length <= 1);
   }
 
   // 숫자키 1~N 으로 그룹 이동 (입력칸에 포커스가 있으면 무시한다).
@@ -455,7 +552,8 @@
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     const n = parseInt(e.key, 10);
     if (!isNaN(n) && n >= 1 && n <= NAV.length) {
-      showTab(NAV[n - 1].tabs[0][0]);
+      const g = NAV[n - 1];
+      showTab(_lastTabInGroup[g.group] || g.tabs[0][0]);
     }
   });
 
@@ -485,8 +583,9 @@
       down: "프로그램과 끊김", connecting: "프로그램 연결 중",
     };
     // ★ 글자 라벨 대신 아이콘 하나로 - 모양까지 다르게 해서(색만으로 구분하지 않음) 알아보기 쉽게 한다.
-    const icons = { live: "✅", polling: "🔄", reconnecting: "🔄", down: "⚠️", connecting: "⏳" };
-    dot.textContent = icons[mode] || "❔";
+    // (이모지 대신 UI.icon() 의 선 아이콘 - 재디자인 지침대로 아이콘 세트를 통일한다.)
+    const iconNames = { live: "wifi", polling: "refresh", reconnecting: "refresh", down: "wifi-off", connecting: "clock" };
+    dot.innerHTML = icon(iconNames[mode] || "alert", 16);
     dot.dataset.mode = mode;
     dot.setAttribute("aria-label", labels[mode] || mode);
     // ★ 마우스를 올리면(모바일은 눌러서) 왜 이 상태인지 바로 설명이 보이게 한다 -
@@ -2274,6 +2373,11 @@
   // ★ 좌측 상단(매매 상태)을 시장별 이모지 + 우하단 점(모드 색)의 아이콘으로 보여준다(글자 라벨
   // 없음) - 예전엔 "국내주식: 모의매매 중 · 해외주식: ..." 처럼 시장이 늘수록 문구가 계속 길어졌다.
   // 자세한 문구는 title(데스크톱 호버)과 클릭(모바일, #conn-indicator 와 같은 패턴)으로 본다.
+  const STATE_LABEL_KO = {
+    idle: "대기", sim: "시뮬레이션", paper: "모의매매", live: "실거래",
+    halt: "중단", degraded: "저하", web: "관찰", replay: "리플레이",
+  };
+
   function updateBand() {
     const band = $("#band");
     const title = $("#band-title");
@@ -2333,6 +2437,18 @@
     }
 
     band.dataset.state = state;
+
+    // ★ 사이드바 상단의 "현재 모드 배지"(#sidebar-mode-badge) 도 같은
+    // state 를 그대로 반영한다 - 사이드바가 항상 떠 있는 데스크톱·태블릿
+    // 에서는 상단바까지 안 봐도 왼쪽에서 바로 보인다.
+    const sideBadge = $("#sidebar-mode-badge");
+    if (sideBadge) {
+      sideBadge.dataset.state = state;
+      const label = STATE_LABEL_KO[state] || state;
+      const labelEl = sideBadge.querySelector(".sidebar-mode-badge-label");
+      if (labelEl) labelEl.textContent = label; else sideBadge.textContent = label;
+    }
+
     title.innerHTML = "";
     if (!icons.length) {
       title.textContent = "연결 중...";
@@ -7017,7 +7133,10 @@
     const btn = $("#theme-toggle");
     if (btn) {
       const isDark = mode === "dark" || (!mode && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      btn.textContent = isDark ? "☀️" : "🌙";
+      // ★ 이모지(🌙/☀️) 대신 UI.icon() 선 아이콘 - 재디자인 지침대로
+      // 아이콘 세트를 하나로 통일한다.
+      btn.innerHTML = icon(isDark ? "sun" : "moon", 17);
+      btn.setAttribute("aria-label", isDark ? "밝은 화면으로 전환" : "어두운 화면으로 전환");
     }
   }
 
