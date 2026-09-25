@@ -1008,6 +1008,18 @@ class Engine:
                     f"{winner.headline} · 오늘 거래 한도를 다 써서 매수하지 않았습니다"
                 )
                 continue
+            # ★★★ 실제로 겪은 버그 - held(동시 보유 수)는 이 함수 맨 앞에서 딱 한 번만
+            # 확인했다. 위에서 후보를 전부 평가한 뒤 여기서 점수 순으로 연달아
+            # _open_position() 을 부르는데, 그때마다 실제로 몇 종목을 보유하게
+            # 됐는지 다시 보지 않아 max_positions(예: 3)를 넘겨 5종목을 사는 일이
+            # 있었다. 살 때마다(=루프를 돌 때마다) 지금 보유 수를 다시 재서 확인한다.
+            with self.lock:
+                held_now = len(self.state.positions)
+            if held_now >= self.cfg.capital.max_positions:
+                self.candidate_status[cand.symbol] = (
+                    f"{winner.headline} · 동시 보유 한도({self.cfg.capital.max_positions}종목)에 도달해 매수하지 않았습니다"
+                )
+                continue
             if winner.technique == "orb":
                 self._orb_done[cand.symbol] = True
             self._open_position(cand, winner, entry_bar_volume, vol=vol)

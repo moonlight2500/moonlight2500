@@ -733,6 +733,74 @@ def test_rescreen_info_tells_next_time() -> None:
           bool(snap.get("rescreen", {}).get("next_at")), str(snap.get("rescreen")))
 
 
+# ━━ 동시 보유 한도 (여러 후보가 한 번에 통과할 때) ━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_max_positions_enforced_across_scored_candidates() -> None:
+    """max_positions=3 인데 5종목이 동시에 매수 신호를 내면, 실제로는 3종목만 사야 한다.
+    ★★★ 실제로 겪은 버그 - try_entries() 가 held(보유 수)를 함수 맨 앞에서 딱 한 번만
+    확인하고, 점수 순으로 정렬한 뒤에는 매번 다시 확인하지 않아 한도를 넘겨 샀다.
+    """
+    print("\n== 동시 보유 한도(여러 후보 매수 시 재확인) ==")
+    from types import SimpleNamespace
+
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.playbook import Verdict
+    from daytrader.screener import Candidate
+    from daytrader.simulator import SimClient
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "paper"
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        cfg.capital.max_positions = 3
+        cfg.capital.allocation = 100_000_000  # 자금은 넉넉하게 둔다 - 한도만 시험한다.
+        cfg.risk.daily_max_trades = 50
+
+        client = SimClient(cfg, themes_path=THEMES_PATH)
+        engine = Engine(cfg, client)
+
+        candidates = [
+            Candidate(
+                symbol=f"00000{i}", name=f"종목{i}", theme="t", last_price=10000.0,
+                change_rate=0.05, trading_amount=1e10, theme_score=1.0,
+                theme_rank=1, rank_in_theme=1, theme_breadth=3, theme_intensity=0.05,
+                why="테스트",
+            )
+            for i in range(5)
+        ]
+        engine.candidates = candidates
+
+        # 진입 판단(playbook)과 봉 조회는 이 테스트의 관심사가 아니다 - 후보 5개
+        # 전부가 서로 다른 점수로 "매수" 신호를 내도록 고정해 둔다.
+        engine._entry_bars = lambda symbol, count: ([SimpleNamespace(volume=1000.0)], False)
+
+        def fake_evaluate(bars, ctx):
+            idx = int(ctx.symbol[-1])
+            v = Verdict(
+                id=f"v-{ctx.symbol}", at="", symbol=ctx.symbol, name=ctx.name, theme=ctx.theme,
+                phase="main", technique="breakout", technique_label="돌파", ok=True,
+                score=10.0 - idx, terms=[], blocked_by=[], headline="테스트 신호",
+                narrative="", changes=[], inputs={}, price=10000.0,
+            )
+            return v, [v]
+
+        engine.playbook.evaluate_entry = fake_evaluate
+
+        engine.try_entries()
+
+        check(
+            "★동시 보유 한도(3)를 넘지 않음",
+            len(engine.state.positions) <= cfg.capital.max_positions,
+            f"실제 {len(engine.state.positions)}건(한도 {cfg.capital.max_positions})",
+        )
+        check(
+            "한도만큼은 실제로 채워짐(예산·자금이 충분하므로)",
+            len(engine.state.positions) == cfg.capital.max_positions,
+            f"실제 {len(engine.state.positions)}건",
+        )
+
+
 def main() -> None:
     tests = [
         test_full_day, test_consecutive_loss_halt, test_daily_trade_limit,
@@ -740,6 +808,7 @@ def main() -> None:
         test_stop_with_close_positions_actually_liquidates, test_force_close_survives_missing_price,
         test_runner_running_flag_after_stop, test_after_market_no_positions_waits_for_next_open,
         test_pnl_curve_includes_held_positions, test_symbol_curves_sum_to_total, test_rescreen_info_tells_next_time,
+        test_max_positions_enforced_across_scored_candidates,
     ]
     for t in tests:
         t()
