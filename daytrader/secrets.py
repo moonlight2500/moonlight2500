@@ -135,6 +135,9 @@ FIELDS = {
     # (get/save)으로 다루기 위해 형식만 맞춘다.
     "auth_password": ("auth", "password", "DAYTRADER_AUTH_PASSWORD"),
     "auth_session_secret": ("auth", "session_secret", "DAYTRADER_AUTH_SESSION_SECRET"),
+    # ★ 최초 실행 때 서버가 스스로 지어 저장한 임시 비밀번호인지 표시한다("1"이면 그렇다).
+    # 사용자가 /api/auth/password 로 직접 바꾸면 지운다 - 그 뒤로는 원격에서도 로그인을 허용해도 된다.
+    "auth_password_is_default": ("auth", "password_is_default", "DAYTRADER_AUTH_PASSWORD_IS_DEFAULT"),
     # ★ 새 기기 승인 목록(devices.json) 서명 키 - 위와 같은 이유로 자동 생성된다. 이 키가 없으면
     # devices.json 을 이 프로그램 밖에서 손댔는지 확인할 수 없다.
     "devices_integrity_key": ("auth", "devices_integrity_key", "DAYTRADER_DEVICES_INTEGRITY_KEY"),

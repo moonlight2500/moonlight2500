@@ -57,10 +57,20 @@ _CHECK_API = {
 
 # ━━ 사전 점검 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def preflight(cfg, client, ledger=None) -> dict:
-    """실매매 시작 전 항목을 순서대로 점검한다. 하나라도 block 이면 시작할 수 없다."""
+def preflight(cfg, client, ledger=None, positions=None) -> dict:
+    """실매매 시작 전 항목을 순서대로 점검한다. 하나라도 block 이면 시작할 수 없다.
+    ★★★ 실제로 겪은 버그 - 8)·9) 는 미체결 주문이 "하나라도" 있으면 무조건
+    막았다. 그런데 재시작은 정상적인 사용법이다 - 이미 포지션을 보유한 채로
+    재시작하면 그 포지션의 서버 OCO(조건부 주문)가 미체결 상태로 남아 있는 게
+    당연한데(특히 allow_overnight=True 기본값), 그 정상 상태 때문에 실거래를
+    아예 시작할 수 없었다. positions(엔진이 들고 있는 종목별 Position, 이미
+    __init__ 에서 daily_state.json 을 읽어 둔 것)를 받아 "지금 보유 중인
+    종목과 연결된" 주문은 통과시키고, 그 종목과 무관한(고아) 주문만 막는다.
+    """
     checks: list[Check] = []
     account_seq = None
+    tracked_symbols = set((positions or {}).keys())
+    tracked_oco_ids = {p.oco_id for p in (positions or {}).values() if getattr(p, "oco_id", None)}
 
     # 1) credentials - 토큰 발급 성공
     try:
@@ -160,21 +170,24 @@ def preflight(cfg, client, ledger=None) -> dict:
     except Exception as exc:
         checks.append(Check("existing_holdings", "기존 보유 종목", False, "warn", f"보유 종목 조회에 실패했습니다: {exc}"))
 
-    # 8) open_orders - 미체결 주문 있으면 차단
+    # 8) open_orders - 우리가 보유 중인 종목과 무관한(고아) 미체결 주문이 있으면 차단
     try:
         open_orders = client.get_orders(status="OPEN")
         rows = open_orders if isinstance(open_orders, list) else open_orders.get("orders", [])
         ours = [o for o in rows if is_ours(o.get("clientOrderId", ""))]
-        ok = len(rows) == 0
+        orphans = [o for o in rows if o.get("symbol") not in tracked_symbols]
+        ok = len(orphans) == 0
         checks.append(Check(
             "open_orders", "미체결 주문", ok, "block",
-            "미체결 주문이 없습니다." if ok
-            else f"미체결 주문 {len(rows)}건(이 중 우리 것 {len(ours)}건)이 있어 시작할 수 없습니다.",
+            "미체결 주문이 없습니다." if ok and not rows
+            else "보유 중인 종목의 주문뿐입니다." if ok
+            else f"미체결 주문 {len(rows)}건 중 보유 종목과 무관한 {len(orphans)}건"
+                 f"(전체 중 우리 것 {len(ours)}건)이 있어 시작할 수 없습니다.",
         ))
     except Exception as exc:
         checks.append(Check("open_orders", "미체결 주문", False, "block", f"미체결 주문 조회에 실패했습니다: {exc}"))
 
-    # 9) conditional_orders - 미체결 조건부 주문 있으면 차단
+    # 9) conditional_orders - 우리가 보유 중인 종목과 무관한(고아) 조건부 주문이 있으면 차단
     try:
         # ★★★ 실제로 겪은 버그 - status 없이 부르면 API 자체가 실패해서,
         # "미체결 조건부 주문 조회 실패"로 이 block 체크가 부당하게
@@ -182,10 +195,16 @@ def preflight(cfg, client, ledger=None) -> dict:
         # 이 정확히 맞는다.
         cond = client.conditional_orders(status="OPEN")
         rows = cond if isinstance(cond, list) else cond.get("orders", [])
-        ok = len(rows) == 0
+        orphans = [
+            o for o in rows
+            if o.get("symbol") not in tracked_symbols and o.get("conditionalOrderId") not in tracked_oco_ids
+        ]
+        ok = len(orphans) == 0
         checks.append(Check(
             "conditional_orders", "미체결 조건부 주문", ok, "block",
-            "미체결 조건부 주문이 없습니다." if ok else f"미체결 조건부 주문 {len(rows)}건이 있어 시작할 수 없습니다.",
+            "미체결 조건부 주문이 없습니다." if ok and not rows
+            else "보유 중인 종목의 서버 손절/익절(OCO)뿐입니다." if ok
+            else f"미체결 조건부 주문 {len(rows)}건 중 보유 종목과 무관한 {len(orphans)}건이 있어 시작할 수 없습니다.",
         ))
     except Exception as exc:
         checks.append(Check("conditional_orders", "미체결 조건부 주문", False, "block", f"조건부 주문 조회에 실패했습니다: {exc}"))
@@ -267,9 +286,12 @@ class Diff:
     action: str
 
 
-def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=None) -> list:
+def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=None, broker=None) -> list:
     """도는 중 계좌와 상태를 맞춘다. 계좌가 진실이다.
     불일치를 조용히 고치지 않는다 - 원장·일지·state/reconcile.jsonl 에 남긴다.
+    ★ broker 를 넘기면 qty_mismatch 때 서버 OCO(조건부 손절/익절)도 새 수량으로
+    다시 건다(engine.py 의 청산/분할매도가 쓰는 취소 후 재등록 패턴과 동일).
+    broker 가 없으면(호출부가 안 넘기면) 예전처럼 내부 수량만 맞춘다.
     """
     last_prices = last_prices or {}
     diffs: list[Diff] = []
@@ -320,12 +342,51 @@ def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=No
             journal.write("reconcile", f"{symbol} 유령 포지션 정리: {diff.detail}", symbol=symbol, name=pos.name)
 
         elif account_qty != pos.quantity:
-            diff = Diff(
-                kind="qty_mismatch", symbol=symbol, name=pos.name, state_qty=pos.quantity,
-                account_qty=account_qty, detail=f"보유 수량이 어긋났습니다 (내부 {pos.quantity} vs 계좌 {account_qty}).",
-                action="계좌 수량으로 맞춤",
-            )
+            old_qty = pos.quantity
+            detail = f"보유 수량이 어긋났습니다 (내부 {old_qty} vs 계좌 {account_qty})."
+            action = "계좌 수량으로 맞춤"
             pos.quantity = account_qty
+
+            # ★★★ 실제로 겪은 버그 - 수량만 내부적으로 맞추고 서버에 걸어 둔
+            # OCO(조건부 손절/익절)는 옛 수량 그대로 방치했다. 부분체결로 수량이
+            # 줄면 옛 수량으로 건 OCO 가 계좌에 없는 수량을 팔려다 거부될 수
+            # 있고, 수량이 늘면 옛(적은) 수량만 커버해 나머지가 무방비로 남는다.
+            # engine.py 청산/분할매도(scale-out)가 쓰는 것과 같은 패턴 -
+            # 취소 후 새 수량으로 재등록 - 을 쓴다. 실패하면 조용히 넘어가지
+            # 않고 일지(halt)·원장(diff.detail)·화면(reconcile_alerts)에 남긴다.
+            if broker is not None and pos.oco_id:
+                try:
+                    cancelled = broker.cancel_oco(pos.oco_id)
+                    if not cancelled and broker.oco_is_open(pos.oco_id):
+                        detail += " 서버 조건부 주문(OCO)을 취소하지 못해 새 수량으로 다시 걸지 못했습니다 - 직접 확인하세요."
+                        journal.write(
+                            "halt",
+                            f"{symbol} 계좌 대조로 수량이 {old_qty}->{account_qty}로 바뀌었지만 "
+                            "서버 OCO 를 취소하지 못해 재등록하지 못했습니다. 옛 수량으로 걸린 주문이 그대로 남아 있습니다.",
+                            symbol=symbol, name=pos.name,
+                        )
+                    else:
+                        new_oco_id = broker.place_oco(pos, cfg)
+                        pos.oco_id = new_oco_id
+                        if new_oco_id is None:
+                            detail += " 서버 조건부 주문(OCO)을 새 수량으로 다시 걸지 못해 프로그램 내부 손절만 작동합니다."
+                            journal.write(
+                                "halt",
+                                f"{symbol} 계좌 대조 후 OCO 재등록에 실패했습니다 - 프로그램 내부 손절만 작동합니다.",
+                                symbol=symbol, name=pos.name,
+                            )
+                        else:
+                            action += " + 서버 OCO 재등록"
+                except Exception as exc:
+                    detail += f" 서버 조건부 주문(OCO) 재등록 중 오류: {exc}"
+                    journal.write(
+                        "halt", f"{symbol} 계좌 대조 후 OCO 재등록 중 오류: {exc}", symbol=symbol, name=pos.name,
+                    )
+
+            diff = Diff(
+                kind="qty_mismatch", symbol=symbol, name=pos.name, state_qty=old_qty,
+                account_qty=account_qty, detail=detail, action=action,
+            )
             diffs.append(diff)
             journal.write("reconcile", diff.detail, symbol=symbol, name=pos.name)
 

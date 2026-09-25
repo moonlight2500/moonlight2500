@@ -15,11 +15,27 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from daytrader import overseas_engine as _overseas_engine
 from daytrader.sizing import split_quantity
 
 
 class NotOwnedError(Exception):
     """이 엔진이 사지 않은 종목을 팔려고 할 때."""
+
+
+def _fx_rate(market: str) -> float:
+    """★★★ [1-11] 실제로 겪은 버그 - 스윙은 국내·해외·암호화폐 예산을 환산 없이
+    하나의 원화 현금 풀로 섞어 쓰는데(SwingCfg.budget 설명 참고), 해외주식 가격은
+    달러다. 원화 배정금액을 달러 주가로 그대로 나누면 수량이 환율 배수(약
+    1,400배)만큼 부풀려진다(해외주식 엔진에서 먼저 겪은 것과 같은 버그).
+    overseas_engine._usd_krw_rate() 를 그대로 재사용한다 - 환율 조회 실패 시
+    보수적 기본값(1,400원)을 쓰는 안전장치도 그대로 물려받는다.
+    ★ market 을 함수로 감싼 이유 - 테스트가 overseas_engine 모듈의
+    _usd_krw_rate 를 통째로 바꿔치기해서 네트워크 호출 없이 검증할 수 있게 한다.
+    """
+    if market != "overseas":
+        return 1.0
+    return _overseas_engine._usd_krw_rate()
 
 
 @dataclass
@@ -127,10 +143,19 @@ class PaperSwingBroker:
         cash = _num(self.cash) or 0.0
         if price is None or amount is None or price <= 0:
             return None
-        quantity = (amount / price) if market == "crypto" else int(amount / price)
+        # ★★★ [1-11] amount 는 원화 예산이지만 해외주식 price 는 달러다 - 환율로
+        # 환산한 뒤 나눠야 한다(_fx_rate 설명 참고). 국내·암호화폐는 rate=1.0 이라
+        # 기존과 동일하게 동작한다.
+        rate = _fx_rate(market)
+        local_amount = amount / rate
+        quantity = (local_amount / price) if market == "crypto" else int(local_amount / price)
         if quantity <= 0 or (market != "crypto" and quantity < 1):
             return None
-        cost = quantity * price * (1 + self.commission_pct)
+        # ★ 현금 풀은 항상 원화 기준이므로(SwingCfg.budget 설명 참고), 실제 비용도
+        # 원화로 환산해 두고 그 기준으로 현금을 빼고 invested 를 기록한다 - sell() 에서
+        # 같은 환산 기준으로 손익을 계산해야 서로 어긋나지 않는다.
+        cost_local = quantity * price * (1 + self.commission_pct)
+        cost = cost_local * rate
         if cost > cash:
             return None
         pos = SwingPosition(
@@ -149,10 +174,14 @@ class PaperSwingBroker:
         if pos is None or price is None or amount is None or price <= 0:
             return None
         market = getattr(pos, "market", "domestic")
-        quantity = (amount / price) if market == "crypto" else int(amount / price)
+        # ★ [1-11] buy() 와 같은 이유 - 원화 예산을 시장 통화로 환산한 뒤 나눈다.
+        rate = _fx_rate(market)
+        local_amount = amount / rate
+        quantity = (local_amount / price) if market == "crypto" else int(local_amount / price)
         if quantity <= 0 or (market != "crypto" and quantity < 1):
             return None
-        cost = quantity * price * (1 + self.commission_pct)
+        cost_local = quantity * price * (1 + self.commission_pct)
+        cost = cost_local * rate
         if cost > cash:
             return None
         _merge_buy(pos, quantity, price, cost)
@@ -163,7 +192,8 @@ class PaperSwingBroker:
         pos = self.book.get(symbol)
         if pos is None:
             raise NotOwnedError(f"{symbol} 은(는) 이 엔진이 산 적 없는 종목입니다 - 매도를 거부합니다.")
-        integer_qty = getattr(pos, "market", "domestic") != "crypto"
+        market = getattr(pos, "market", "domestic")
+        integer_qty = market != "crypto"
         price = _num(price) or 0.0
         held = _num(pos.quantity) or 0.0
         entry = _num(pos.entry_price) or 0.0
@@ -171,14 +201,19 @@ class PaperSwingBroker:
         if qty >= held:
             qty = held
         partial = qty < held
-        proceeds = qty * price * (1 - self.commission_pct - self.tax_pct)
+        # ★★★ [1-11] entry_price·price 는 시장 통화 그대로다(해외주식은 달러) -
+        # buy()/add() 가 현금 풀(원화)에 반영한 것과 같은 환율로 환산해야
+        # invested·pnl 이 같은 기준으로 맞는다. rate=1.0(국내·암호화폐)이면
+        # 기존과 동일하게 동작한다.
+        rate = _fx_rate(market)
+        proceeds = qty * price * (1 - self.commission_pct - self.tax_pct) * rate
         # ★★★ 실제로 겪은 버그(작지만 실재함) - buy() 는 pos.invested 에 매수 수수료를 포함해
         # 기록하는데(cost = quantity*price*(1+commission_pct)), 여기 cost 는 수수료 없이
         # quantity*entry 로만 계산해서 둘이 어긋났다. 이 pnl 의 cost 기준과 재시작 시 현금을
         # 복원하는 공식(swing_engine.py 의 "locked = invested - sold_value")이 서로 다른
         # 기준을 쓰면, 보유 중 재시작은 맞다가도 매도 직후 재시작하면 몇 백 원 단위로 계속
-        # 어긋난다. invested 와 같은 기준(수수료 포함)으로 맞춘다.
-        cost = qty * entry * (1 + self.commission_pct)
+        # 어긋난다. invested 와 같은 기준(수수료 포함·원화 환산)으로 맞춘다.
+        cost = qty * entry * (1 + self.commission_pct) * rate
         pnl = proceeds - cost
         self.cash = (_num(self.cash) or 0.0) + proceeds
         if partial:

@@ -14,6 +14,7 @@ import signal
 import threading
 import time
 from datetime import datetime, timedelta
+from math import isnan
 from types import SimpleNamespace
 
 from daytrader import notify, session
@@ -170,6 +171,12 @@ class Engine:
         self.candidate_verdicts: dict = {}
         self._last_verdicts: dict = {}
         self._orb_done: dict = {}
+        # ★ 종목별 당일 세션 누적 VWAP·고가(3-2). {symbol: {vwap_num, vwap_den, high, last_ts}}.
+        #   _rollover_if_new_day() 에서 날짜가 바뀔 때 함께 비운다.
+        self._session_stats: dict = {}
+        # ★ 종목별 전일 고가·저가 캐시(3-3, volatility_breakout 용). 장중에 어제
+        #   일봉이 바뀔 리 없어 심볼당 하루 한 번만 조회한다. 날짜가 바뀌면 비운다.
+        self._prev_day_cache: dict = {}
 
         self.pnl_curve: list = []
         self.equity_curve: list = []
@@ -332,9 +339,14 @@ class Engine:
             )
             return False
 
-        if allocation and -self.state.realized_pnl / allocation >= r.daily_loss_limit_pct:
+        # ★★★ 실제로 겪은 버그 - 실현손익만 보고 일일 손실 한도를 판단했다.
+        # 아직 팔지 않은 보유 종목의 평가손실은 전혀 반영되지 않아, 이미
+        # 한도만큼(또는 그 이상) 물려 있는 상태에서도 신규 진입이 계속
+        # 허용됐다("지금 팔면 확정될 손익"까지 함께 봐야 한다).
+        daily_pnl = self.state.realized_pnl + self._unrealized_pnl()
+        if allocation and -daily_pnl / allocation >= r.daily_loss_limit_pct:
             self._halt(
-                f"일일 손실 한도({r.daily_loss_limit_pct*100:.0f}%)에 도달했습니다. "
+                f"일일 손실 한도({r.daily_loss_limit_pct*100:.0f}%)에 도달했습니다(평가손실 포함). "
                 "손실이 난 날 더 하려는 충동을 막는 것이 이 한도의 목적입니다."
             )
             return False
@@ -399,6 +411,67 @@ class Engine:
             self.notifier.trade(kind, t)
         except Exception:
             pass
+
+    def _session_stats_for(self, symbol: str, bars) -> tuple:
+        """★★★ 실제로 겪은 문제(3-2) - 진입·청산 판정에 넘기는 bars 는 부하를
+        줄이려 최근 60~수백 개짜리 굴러가는 창만 받아 온다(_recent_bars/_entry_bars).
+        playbook 의 vwap(bars)·day_high=max(b.high for b in bars) 는 그 창 전체를
+        "당일"로 착각해, 09:00 개장 이후 그 창 밖으로 밀려난 값은 조용히 사라진다.
+        ★ count 를 늘려 한 번에 09:00 부터 다 받아 오면 될 것 같지만 그러면 안 된다 -
+        국내 라우터/토스 클라이언트는 한 번에 200개 넘게 요청하면 오류 없이 빈
+        배열을 돌려준다(technique_backtest.py 의 _ROUTER_BATCH 주석 참고). 게다가
+        QuoteRouter(엔진이 실제로 쓰는 래퍼)는 candles() 에 before 페이지 파라미터도
+        안 받아 여러 페이지로 나눠 받을 수도 없다.
+        그래서 라우터 호출은 그대로 두고, 매 루프 새로 확정된 봉만(ts 로 판별) 골라
+        VWAP 분자·분모와 고가를 세션 시작부터 누적해 둔다. 엔진이 하루 종일(적어도
+        개장 근처부터) 계속 돌고 있다는 전제 하에, 매 루프 조금씩 더 들어오는
+        굴러가는 창을 그냥 이어붙이는 셈이라 안전하고 API 호출 방식도 안 바뀐다.
+        """
+        st = self._session_stats.get(symbol)
+        if st is None:
+            st = {"vwap_num": 0.0, "vwap_den": 0.0, "high": float("-inf"), "last_ts": None}
+            self._session_stats[symbol] = st
+        for b in bars or []:
+            ts = str(b.ts)
+            if st["last_ts"] is not None and ts <= st["last_ts"]:
+                continue  # 이미 이전 루프에서 누적한 봉이다 - 중복 반영 금지
+            if isnan(b.high) or isnan(b.low) or isnan(b.close) or isnan(b.volume):
+                continue
+            typical = (b.high + b.low + b.close) / 3
+            st["vwap_num"] += typical * b.volume
+            st["vwap_den"] += b.volume
+            if b.high > st["high"]:
+                st["high"] = b.high
+            st["last_ts"] = ts
+        v = st["vwap_num"] / st["vwap_den"] if st["vwap_den"] else float("nan")
+        h = st["high"] if st["high"] != float("-inf") else float("nan")
+        return v, h
+
+    def _prev_day_range(self, symbol: str) -> tuple:
+        """전일(직전 거래일) 실제 고가·저가(3-3). volatility_breakout 기법이
+        '봉을 반으로 나눈 근사' 대신 실제 전일 레인지를 쓸 수 있도록 일봉
+        2개를 받아 온다. 오늘 자 일봉이 아직 미완성으로 같이 오더라도(대부분의
+        일봉 API 가 그렇다) 마지막 봉은 오늘, 그 앞이 전일이라고 보고 뒤에서
+        두 번째를 쓴다(해외주식 엔진의 day_change 필터와 같은 관례).
+        장중에 어제 일봉이 바뀔 리 없으니 심볼당 하루 한 번만 조회해 캐시한다.
+        """
+        cached = self._prev_day_cache.get(symbol)
+        if cached is not None:
+            return cached
+        try:
+            rows = self.client.candles(symbol, "1d", 2)
+            bars = [Bar.from_api(r) for r in (rows or []) if isinstance(r, dict)]
+        except Exception:
+            bars = []
+        if len(bars) >= 2:
+            prev = bars[-2]
+            result = (prev.high, prev.low)
+        elif len(bars) == 1:
+            result = (bars[-1].high, bars[-1].low)  # 상장 첫날 등 - 그거라도 쓴다
+        else:
+            result = (float("nan"), float("nan"))
+        self._prev_day_cache[symbol] = result
+        return result
 
     def _entry_bars(self, symbol: str, count: int = 60):
         """★ 진입 판정에서 봉을 읽는 모든 곳은 반드시 이걸 거친다.
@@ -480,13 +553,15 @@ class Engine:
             self._track(pos, last)
 
             sz = self.cfg.sizing
+            bars = self._recent_bars(symbol)
+            session_vwap, session_high = self._session_stats_for(symbol, bars)
             ctx = SimpleNamespace(
                 held_minutes=pos.held_minutes(self.clock.now()),
                 force_close=force_close, now=self.clock.now(),
                 prev_verdict=self._last_verdicts.get(symbol), cfg=self.cfg,
                 scale_out=bool(sz.scale_out),  # 분할 매도를 쓰면 고정 익절(전량)은 끄고 나눠서 판다.
+                session_vwap=session_vwap, session_high=session_high,
             )
-            bars = self._recent_bars(symbol)
             verdict = self.playbook.evaluate_exit(pos, bars, last, ctx)
             if verdict is not None:
                 self._last_verdicts[symbol] = verdict
@@ -527,6 +602,23 @@ class Engine:
         if peak_changed:
             self.state.save()
 
+    def _server_oco_fill_estimate(self, symbol: str, pos, last_price: float) -> dict:
+        """OCO 취소가 실패했는데 oco_is_open() 이 False 여서(취소하려던 사이 이미
+        체결됨) 서버 체결로 보고 내부 정리할 때, 실제 체결가를 최대한 찾는다.
+        safety.reconcile() 의 ghost 포지션 처리와 같은 방식(최근 SELL 체결
+        이력 조회)이고, 못 찾으면 추정임을 표시하고 마지막 시세로 대신한다.
+        """
+        price = None
+        try:
+            from daytrader.safety import _find_recent_sell_price
+            price = _find_recent_sell_price(self.client, symbol)
+        except Exception:
+            price = None
+        estimated = price is None
+        if price is None:
+            price = last_price
+        return {"averageFilledPrice": price, "filledQuantity": pos.quantity, "_estimated": estimated}
+
     def _poll_server_oco(self, prices: dict) -> None:
         """live + use_conditional_oco 일 때만 부른다. conditional_orders() 한 번으로
         전체 조건부 주문을 받아 색인한다.
@@ -563,13 +655,24 @@ class Engine:
 
         if server_filled is None and pos.oco_id:
             cancelled = self.broker.cancel_oco(pos.oco_id)
-            if not cancelled and self.broker.oco_is_open(pos.oco_id):
-                return  # 서버에 주문이 살아있다 - 여기서 또 팔면 이중 매도가 된다.
+            if not cancelled:
+                if self.broker.oco_is_open(pos.oco_id):
+                    return  # 서버에 주문이 살아있다 - 여기서 또 팔면 이중 매도가 된다.
+                # ★★★ 실제로 겪은 버그 - 취소는 실패했는데 oco_is_open() 이
+                # False 라는 건 "취소하려는 사이 이미 체결돼 취소할 대상이
+                # 없어졌다"는 뜻이다(_poll_server_oco 가 다음 주기에 잡기 전에
+                # 다른 청산 기법이 먼저 이 함수를 부른 경쟁 상태). 예전엔 그대로
+                # 아래 broker.sell() 로 내려가 팔 수량이 0이라 매도 자체가
+                # 실패하고, 매도 실패로 return 해 버려 포지션이 영원히 지워지지
+                # 않는 유령 포지션이 됐다. 이미 서버에서 체결된 것으로 보고,
+                # 실제 체결가를 최대한 찾아(계좌 대조와 같은 방식) 내부적으로
+                # 정리한다 - 다시 팔려 하지 않는다.
+                server_filled = self._server_oco_fill_estimate(symbol, pos, last_price)
 
         if server_filled is not None:
             exit_price = server_filled.get("averageFilledPrice") or server_filled.get("price") or last_price
             qty = server_filled.get("filledQuantity") or pos.quantity
-            estimated = False
+            estimated = bool(server_filled.get("_estimated"))
             headline = "서버 OCO 체결"
             technique = "fixed"
             narrative = "증권사 서버에 걸어둔 손절/익절 주문이 먼저 체결되었습니다."
@@ -685,13 +788,17 @@ class Engine:
         entry_bars, _partial = self._entry_bars(symbol, max(80, self.cfg.entry.breakout_lookback * 4))
         if not entry_bars:
             return
+        session_vwap, session_high = self._session_stats_for(symbol, entry_bars)
         ctx = SimpleNamespace(
             symbol=symbol, name=pos.name, theme=pos.theme, upper_limit=None, theme_bars=None, now=self.clock.now(),
             prev_verdict=None, prev_verdicts=[], change_rate=(cand.change_rate if cand else 0.0),
             theme_rank=(cand.theme_rank if cand else 0), theme_breadth=(cand.theme_breadth if cand else 0),
             theme_intensity=(cand.theme_intensity if cand else 0.0), orb_done=True, minutes_to_close=minutes_left,
             window=self._window, kr_session=True,
+            session_vwap=session_vwap, session_high=session_high,
         )
+        if "volatility_breakout" in self.cfg.strategy.entry_order:
+            ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(symbol)
         try:
             winner, _ = self.playbook.evaluate_entry(entry_bars, ctx)
         except Exception:
@@ -933,6 +1040,7 @@ class Engine:
                         theme_bars = other_bars
                         break
 
+            session_vwap, session_high = self._session_stats_for(cand.symbol, bars)
             ctx = SimpleNamespace(
                 symbol=cand.symbol, name=cand.name, theme=cand.theme,
                 upper_limit=upper_limit, theme_bars=theme_bars, now=self.clock.now(),
@@ -943,7 +1051,10 @@ class Engine:
                 orb_done=self._orb_done.get(cand.symbol, False),
                 minutes_to_close=minutes_between(self.clock.now(), self._force_close_dt()),
                 window=self._window, kr_session=True,
+                session_vwap=session_vwap, session_high=session_high,
             )
+            if "volatility_breakout" in self.cfg.strategy.entry_order:
+                ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(cand.symbol)
 
             winner, all_verdicts = self.playbook.evaluate_entry(bars, ctx)
             self.candidate_verdicts[cand.symbol] = all_verdicts
@@ -1006,6 +1117,18 @@ class Engine:
                 # "왜 신호가 떴는데 안 샀나"를 알 수 있어야 한다.
                 self.candidate_status[cand.symbol] = (
                     f"{winner.headline} · 오늘 거래 한도를 다 써서 매수하지 않았습니다"
+                )
+                continue
+            # ★★★ 실제로 겪은 버그 - held(동시 보유 수)는 이 함수 맨 앞에서 딱 한 번만
+            # 확인했다. 위에서 후보를 전부 평가한 뒤 여기서 점수 순으로 연달아
+            # _open_position() 을 부르는데, 그때마다 실제로 몇 종목을 보유하게
+            # 됐는지 다시 보지 않아 max_positions(예: 3)를 넘겨 5종목을 사는 일이
+            # 있었다. 살 때마다(=루프를 돌 때마다) 지금 보유 수를 다시 재서 확인한다.
+            with self.lock:
+                held_now = len(self.state.positions)
+            if held_now >= self.cfg.capital.max_positions:
+                self.candidate_status[cand.symbol] = (
+                    f"{winner.headline} · 동시 보유 한도({self.cfg.capital.max_positions}종목)에 도달해 매수하지 않았습니다"
                 )
                 continue
             if winner.technique == "orb":
@@ -1202,9 +1325,17 @@ class Engine:
     # ━━ preflight / reconcile (STAGE 13, daytrader/safety.py) ━━━━━━━━━━━
 
     def _preflight(self) -> bool:
-        """실거래 시작 전 계좌 상태를 먼저 확인한다 (원칙 6)."""
+        """실거래 시작 전 계좌 상태를 먼저 확인한다 (원칙 6).
+        ★★★ 실제로 겪은 버그 - 보유 종목이 있는 상태로 재시작(정상적인 사용법 -
+        allow_overnight 가 기본값 True)하면 그 종목의 서버 OCO 가 미체결로
+        남아 있는 게 당연한데, preflight() 의 8)·9) 번 검사가 "미체결 주문이
+        하나라도 있으면 무조건 차단"이라 실거래를 아예 시작할 수 없었다.
+        __init__ 에서 이미 daily_state.json 을 읽어 둔 self.state.positions 를
+        넘겨, 지금 보유 중인 종목과 연결된 주문은 통과시키고 그 외(고아
+        주문)만 차단하게 한다.
+        """
         from daytrader.safety import preflight
-        result = preflight(self.cfg, self.client, ledger=self.ledger)
+        result = preflight(self.cfg, self.client, ledger=self.ledger, positions=self.state.positions)
         for c in result["checks"]:
             self.journal.write(
                 "session", f"[사전점검] {c['label']}: {c['detail']}",
@@ -1220,7 +1351,10 @@ class Engine:
         from daytrader.safety import reconcile as do_reconcile
         with self.lock:
             last_prices = {s: p.entry_price for s, p in self.state.positions.items()}
-        diffs = do_reconcile(self.client, self.state, self.cfg, self.journal, self.ledger, last_prices=last_prices)
+        diffs = do_reconcile(
+            self.client, self.state, self.cfg, self.journal, self.ledger,
+            last_prices=last_prices, broker=self.broker,
+        )
         if diffs:
             with self.lock:
                 self.reconcile_alerts.extend(d.detail for d in diffs)
@@ -1259,6 +1393,8 @@ class Engine:
             self.candidate_status = {}
             self.candidate_verdicts = {}
             self._last_verdicts = {}
+            self._session_stats = {}
+            self._prev_day_cache = {}
             self.report = None
             self.equity_curve = []
             self.pnl_curve = []

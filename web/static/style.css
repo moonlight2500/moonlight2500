@@ -23,28 +23,42 @@ body {
 }
 
 :root {
-  --paper: #f5f5f2;
-  --card: #fffffe;
-  --ink: #1a1d21;
+  /* ★★★ "심플&모던, 깔끔한 색상배치" 재단장 - 기존 톤(베이지 --paper +
+     진한 잉크)을 더 차분한 중성 그레이 + 인디고 악센트로 바꾼다. 토큰
+     "이름"은 하나도 바꾸지 않는다 - app.js 수천 곳이 var(--s2) 같은
+     이름을 그대로 참조하므로, 이름을 바꾸면 다른 코스(B·C) 코드가
+     전부 깨진다. 여기서는 오직 "값"만 새 팔레트로 바꾼다. */
+  --paper: #f6f7f9;   /* 페이지 배경 */
+  --card: #ffffff;    /* 카드/표면 */
+  --ink: #111418;     /* 본문 글자 */
+  --ink-2: #4a515c;   /* ★ 새 토큰 - muted 보다 진한 "부제목" 급 보조 글자.
+                          기존 컴포넌트는 안 건드려도 되니 여기 추가해도
+                          다른 코스와 충돌하지 않는다(새 이름이라 아무도
+                          안 쓰고 있었다). */
   /* ★★★ 다크모드 추가 후 발견한 문제 - button.b/.toast/.seg button.active 는
      "배경 var(--ink) + 글자 흰색 고정"이었다. 다크모드에서 --ink 가 밝은 색으로
      뒤집히면 밝은 배경에 흰 글자가 남아 거의 안 보였다. var(--ink) 를 배경으로 쓸 때
      그 위에 놓는 글자색은 항상 이 토큰을 쓴다 - 라이트에서는 흰색, 다크에서는
      어두운 색으로 같이 뒤집힌다. */
   --ink-contrast: #ffffff;
-  /* ★ 6e7178 은 --paper 배경에서 대비 4.47:1 로 WCAG AA 본문 기준(4.5)에
-     살짝 못 미쳤다. 힌트·라벨·표 머리글 등 거의 모든 보조 텍스트에 쓰이는
-     색이라 이 정도 차이도 실제 가독성에 영향을 준다 - 6.2:1 로 낮췄다. */
-  --muted: #585b61;
-  --faint: #9b9da2;
-  --rule: #dcdbd5;
-  --rule2: #eceae4;
+  --muted: #8a919c;
+  --faint: #b7bcc4;
+  --rule: #e6e8ec;
+  --rule2: #eef0f3;
 
-  --rise: #c0392b; /* 상승·수익 = 빨강 (국내 시세 관례) */
-  --fall: #14539a; /* 하락·손실 = 파랑 */
+  /* ★★★ 악센트(인디고) - 새 토큰. 선택된 메뉴 항목·포커스·강조 버튼에
+     쓴다. rise(빨강)·fall(파랑)과 색상환에서 충분히 떨어져 있어(보라
+     계열) 손익 색과 섞여 보이지 않는다. */
+  --accent: #5b5bd6;
+  --accent-ink: #ffffff;      /* 악센트 배경 위 글자색 */
+  --accent-weak: #edeefc;     /* 옅은 악센트 배경(선택된 메뉴 항목 등) */
+  --accent-weak-ink: #4744c2; /* 옅은 악센트 배경 위 글자색 */
+
+  --rise: #e5484d; /* 상승·수익 = 빨강 (국내 시세 관례) */
+  --fall: #3b82f6; /* 하락·손실 = 파랑 - 악센트(보라)와 색상환에서 떨어져 있어 헷갈리지 않는다 */
 
   /* 종목 구분색 6칸 — '손익 방향'이 아니라 '어느 종목인가'를 나타낸다.
-     상승빨강·하락파랑·잉크(#1a1d21)와 일부러 멀리 떨어뜨린 값이다.
+     상승빨강·하락파랑·잉크와 일부러 멀리 떨어뜨린 값이다.
      가까우면 종목색을 손익 방향으로 오독한다. 색각(protan/deutan)에서도
      서로, 그리고 방향색과 구분되는지 확인하고 골랐다 — 모든 쌍 색각
      ΔE 9.5 이상 / 정상시야 19.3 이상. 값과 순서를 손대지 마라.
@@ -58,15 +72,16 @@ body {
   --series6: #008362;
   --series-etc: #6e7178; /* 7번째부터. 새 색을 만들어 내지 않는다 */
 
-  /* 상태 배너 색 (.band[data-state]) */
-  --halt: #96690f;
-  --live: #7b1e1e;
-  --idle: #2c3036;
-  --paper-mode: #2a4a3f;
-  --sim: #3c4a63;
-  --web: #35544e;
-  --replay: #4a4360;
-  --degraded: #8a4b12;
+  /* 상태 배너 색 (.band[data-state]) - 이제 큰 띠가 아니라 작은 점/알약에
+     쓰이지만, 데이터 속성과 값의 뜻은 그대로다. */
+  --halt: #b45309;
+  --live: #be123c;
+  --idle: #8a919c;
+  --paper-mode: #0d9488;
+  --sim: #5b5bd6;
+  --web: #3b82f6;
+  --replay: #7c6fd6;
+  --degraded: #c2410c;
 
   --sans: "Pretendard", -apple-system, "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
   --mono: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
@@ -82,30 +97,52 @@ body {
   --s4: 16px;   /* 카드 사이 */
   --s5: 24px;   /* 화면 구역 사이 */
 
-  --stickh: 0px; /* JS 가 .stickytop 높이를 재서 넣는다 */
-  --radius: 12px;
+  /* ★ 글자 크기 스케일 - 12/13/14/16/20/24 여섯 단계로만 쓴다(재디자인
+     지침). 기존 코드가 px 리터럴을 그대로 쓰는 곳이 많아 변수로 강제
+     교체하진 않지만, 새로 짜는 셸 컴포넌트는 전부 이 변수를 쓴다. */
+  --fs-1: 12px;
+  --fs-2: 13px;
+  --fs-3: 14px;
+  --fs-4: 16px;
+  --fs-5: 20px;
+  --fs-6: 24px;
 
-  /* ★ 입체감 스케일 - 카드 그림자가 0.04 알파로 거의 안 보여 화면이 밋밋했다.
-     3단계로 정리해 카드(sm)·떠 있는 패널(md)·모달/토스트(lg)를 구분한다.
-     간격 스케일과 같은 원칙 - 새 그림자 값을 만들지 말고 이 중에서 고른다. */
-  --shadow-sm: 0 1px 2px rgba(26, 29, 33, 0.05), 0 1px 1px rgba(26, 29, 33, 0.04);
-  --shadow-md: 0 4px 12px rgba(26, 29, 33, 0.08), 0 1px 2px rgba(26, 29, 33, 0.05);
-  --shadow-lg: 0 12px 32px rgba(26, 29, 33, 0.16), 0 2px 8px rgba(26, 29, 33, 0.06);
+  --stickh: 0px; /* JS 가 .stickytop(새 상단바) 높이를 재서 넣는다 */
+  --radius: 12px;    /* 카드 등 큰 컴포넌트 */
+  --radius-sm: 8px;  /* 버튼·입력창 등 작은 컨트롤 */
+  --sidebar-w: 232px;
+  --sidebar-w-rail: 64px;
+  --topbar-h: 56px;
+  --bottombar-h: 58px;
+
+  /* ★ 입체감 스케일 - "그림자보다 옅은 1px 테두리 위주로" 재요청에 따라
+     그림자는 더 절제하고(값 자체를 낮춤) 테두리(var(--rule))가 주된
+     구분선 역할을 한다. 3단계 구성은 그대로 유지 - 카드(sm)·떠 있는
+     패널(md)·모달/토스트(lg). 새 그림자 값을 만들지 말고 이 중에서 고른다. */
+  --shadow-sm: 0 1px 2px rgba(17, 20, 24, 0.04);
+  --shadow-md: 0 6px 16px rgba(17, 20, 24, 0.07), 0 1px 2px rgba(17, 20, 24, 0.04);
+  --shadow-lg: 0 16px 40px rgba(17, 20, 24, 0.14), 0 2px 8px rgba(17, 20, 24, 0.05);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #14161a;
-    --card: #1e2126;
-    --ink: #e8e9ea;
-    --ink-contrast: #14161a;
-    --muted: #a8abb2;
-    --faint: #6b6e75;
-    --rule: #2c2f35;
-    --rule2: #23262b;
+    --paper: #0e1014;
+    --card: #171a20;
+    --ink: #e8eaed;
+    --ink-2: #c4c9d1;
+    --ink-contrast: #0e1014;
+    --muted: #8b929d;
+    --faint: #5a616c;
+    --rule: #262a33;
+    --rule2: #1e222a;
 
-    --rise: #e2574a;
-    --fall: #4f8fd4;
+    --accent: #7c7cf0;
+    --accent-ink: #0e1014;
+    --accent-weak: #23253a;
+    --accent-weak-ink: #b3b3f8;
+
+    --rise: #f0656a;
+    --fall: #5b9dff;
 
     --series1: #8bd83c;
     --series2: #d94bb0;
@@ -114,21 +151,40 @@ body {
     --series5: #9c8ff0;
     --series6: #24b98c;
     --series-etc: #9799a0;
+
+    --halt: #d99a4e;
+    --live: #f0657a;
+    --idle: #6b7280;
+    --paper-mode: #2dd4bf;
+    --sim: #7c7cf0;
+    --web: #5b9dff;
+    --replay: #a89af0;
+    --degraded: #f0975a;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.44), 0 2px 8px rgba(0, 0, 0, 0.24);
   }
 }
 
 :root[data-theme="dark"] {
-  --paper: #14161a;
-  --card: #1e2126;
-  --ink: #e8e9ea;
-  --ink-contrast: #14161a;
-  --muted: #a8abb2;
-  --faint: #6b6e75;
-  --rule: #2c2f35;
-  --rule2: #23262b;
+  --paper: #0e1014;
+  --card: #171a20;
+  --ink: #e8eaed;
+  --ink-2: #c4c9d1;
+  --ink-contrast: #0e1014;
+  --muted: #8b929d;
+  --faint: #5a616c;
+  --rule: #262a33;
+  --rule2: #1e222a;
 
-  --rise: #e2574a;
-  --fall: #4f8fd4;
+  --accent: #7c7cf0;
+  --accent-ink: #0e1014;
+  --accent-weak: #23253a;
+  --accent-weak-ink: #b3b3f8;
+
+  --rise: #f0656a;
+  --fall: #5b9dff;
 
   --series1: #8bd83c;
   --series2: #d94bb0;
@@ -137,6 +193,19 @@ body {
   --series5: #9c8ff0;
   --series6: #24b98c;
   --series-etc: #9799a0;
+
+  --halt: #d99a4e;
+  --live: #f0657a;
+  --idle: #6b7280;
+  --paper-mode: #2dd4bf;
+  --sim: #7c7cf0;
+  --web: #5b9dff;
+  --replay: #a89af0;
+  --degraded: #f0975a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.44), 0 2px 8px rgba(0, 0, 0, 0.24);
 }
 
 * {
@@ -182,15 +251,16 @@ a {
 }
 
 /* ★ 포커스 링 - 브라우저 기본 파란 테두리는 --fall(손실 파랑)과 헷갈릴 수 있어
-   중립적인 잉크색 링으로 통일한다. 마우스 클릭에는 안 뜨고(:focus-visible)
-   키보드 포커스에만 떠서 화면이 지저분해지지 않는다. */
+   악센트(인디고) 링으로 통일한다 - --fall 과 색상환에서 떨어져 있어 헷갈리지
+   않는다. 마우스 클릭에는 안 뜨고(:focus-visible) 키보드 포커스에만 떠서
+   화면이 지저분해지지 않는다. */
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid rgba(26, 29, 33, 0.55);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -252,195 +322,526 @@ section h2 {
   border: 0;
 }
 
-/* ━━ 상단 고정 영역 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   ★★ 배너와 메뉴에 각각 sticky·top:0 을 주지 마라. 같은 자리를 두고
-   겹치는데 배너 z-index 가 높아 메뉴가 그 뒤로 밀려, 스크롤하면 메뉴가
-   사라진다. 높이를 재서 top 을 맞추려 들지도 마라 — 배너 높이는 상태
-   문구와 창 너비에 따라 달라져 계속 어긋난다. 한 상자로 묶으면 잴 일이
-   없다. */
-.stickytop {
+/* ━━ 앱 셸 - 좌측 사이드바(데스크톱/태블릿) + 상단바 + 본문 ━━━━━━━━━━━━━━━━━━━━━━
+   ★★★ "많은 스크롤로 보기 불편한 네비게이션 지양" 재설계 - 예전엔 그룹 탭(4개) +
+   하위 탭(선택된 그룹만) 두 줄을 눌러가며 찾아야 했다. 이제 데스크톱·태블릿은
+   왼쪽에 16개 화면을 전부 펼쳐 둔 사이드바 하나로 어디든 한 번에 간다. 모바일은
+   화면이 좁아 사이드바 대신, 아래 고정 탭바(그룹 4개) + 그 위 가로로 미는 칩
+   한 줄(그룹 안 하위 탭)로 같은 일을 한다. .sub-nav/.group-nav 같은 예전 클래스
+   이름은 그대로 두되(JS 훅이 그 이름을 그대로 querySelector 한다) 쓰임새를
+   맞게 새로 그린다 - 이 두 클래스와 #band 를 참조하는 JS 는 모두 이 코스가
+   직접 쓰는 코드라 이름을 다시 붙여도 안전하다는 걸 확인했다. */
+.app-shell {
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
+}
+
+.sidebar {
+  --sbw: var(--sidebar-w);
+  /* ★★★ 실제로 겪은 버그 - position:fixed 로 뒀더니, 기본 비밀번호 경고
+     배너처럼 #app-root 맨 앞에 끼어드는 요소가 있으면 그 배너는 정상
+     흐름대로 아래로 밀려나는데 "흐름 밖"인 사이드바는 제자리(위쪽)에 그대로
+     남아 배너와 겹쳐 보였다. position:sticky 로 바꾸면 사이드바가 여전히
+     정상 흐름 안에 있어 앞에 뭐가 끼어들든 함께 밀려나면서도, 스크롤할
+     때는 뷰포트 위쪽에 붙어(top:0) 예전과 똑같이 항상 보인다. */
   position: sticky;
   top: 0;
-  z-index: 30;
+  align-self: flex-start;
+  height: 100vh;
+  z-index: 40;
+  width: var(--sbw);
+  flex: 0 0 auto;
+  display: none; /* 768px 미만(모바일)에서는 아예 없다 - 아래 미디어쿼리가 켠다 */
+  flex-direction: column;
+  background: var(--card);
+  border-right: 1px solid var(--rule);
+  overflow: hidden;
+  transition: width 160ms ease;
 }
 
-.band,
-.group-nav,
-.sub-nav {
-  /* 각자 position 을 주지 않는다 - .stickytop 이 통째로 고정한다 */
-  width: 100%;
+.app-shell.sidebar-collapsed .sidebar {
+  --sbw: var(--sidebar-w-rail);
 }
 
-.band {
+.sidebar-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-  /* ★ 노치가 있는 기기에서 상태 바가 화면 맨 위 배너와 겹치지 않게
-     safe-area 만큼 위쪽 여백을 더한다 - 지원 안 하는 기기는 0 이라 그대로. */
-  padding: calc(var(--s2) + env(safe-area-inset-top, 0px)) var(--s4) var(--s2);
-  color: #fff;
-  background: var(--idle);
-  font-size: 13px;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3);
+  border-bottom: 1px solid var(--rule);
+  flex: 0 0 auto;
+  min-height: var(--topbar-h);
 }
 
-.band[data-state="sim"] { background: var(--sim); }
-.band[data-state="replay"] { background: var(--replay); }
-.band[data-state="web"] { background: var(--web); }
-.band[data-state="paper"] { background: var(--paper-mode); }
-.band[data-state="live"] { background: var(--live); }
-.band[data-state="halt"] { background: var(--halt); }
-.band[data-state="idle"] { background: var(--idle); }
-.band[data-state="degraded"] {
-  background: var(--degraded);
-  animation: band-blink 2s ease-in-out infinite;
+.sidebar-collapse {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
 }
+
+.sidebar-collapse:hover {
+  color: var(--ink);
+  background: var(--rule2);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  color: var(--ink);
+}
+
+.sidebar-brand-logo {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.sidebar-brand-name {
+  font-weight: 700;
+  font-size: var(--fs-4);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ★ 사이드바 안의 현재 매매 상태 배지 - #band 와 같은 색 규칙(data-state)을
+   따로 mirror 한다(진짜 #band 는 상단바 쪽에 있다 - 아래 참고). */
+.sidebar-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 var(--s3) var(--s2);
+  padding: 3px var(--s2);
+  border-radius: 999px;
+  background: var(--rule2);
+  color: var(--ink-2);
+  font-size: var(--fs-1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sidebar-mode-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--idle);
+  flex: 0 0 auto;
+}
+.sidebar-mode-badge[data-state="sim"]::before { background: var(--sim); }
+.sidebar-mode-badge[data-state="web"]::before { background: var(--web); }
+.sidebar-mode-badge[data-state="paper"]::before { background: var(--paper-mode); }
+.sidebar-mode-badge[data-state="live"]::before { background: var(--live); }
+.sidebar-mode-badge[data-state="halt"]::before { background: var(--halt); animation: band-blink 1s ease-in-out infinite; }
+.sidebar-mode-badge[data-state="degraded"]::before { background: var(--degraded); animation: band-blink 1s ease-in-out infinite; }
 
 @keyframes band-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
 
-.band .band-title {
-  font-weight: 600;
+.sidebar-nav {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--s2) var(--s2) var(--s4);
 }
 
-.band .band-meta {
-  color: rgba(255, 255, 255, 0.8);
+.sidebar-group + .sidebar-group {
+  margin-top: var(--s3);
 }
 
-#theme-toggle,
-#currency-toggle {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0;
-  opacity: 0.85;
-}
-#theme-toggle:hover,
-#currency-toggle:hover {
-  opacity: 1;
-}
-/* ★ "원달러 아이콘의 타원형 박스를 없애고" - 알약형 배경·테두리를 없애 #theme-toggle 과
-   같은 맨 아이콘 스타일로 되돌린다. "$"/"₩" 글자만으로는 옅어 보일 수 있어 굵게(700)
-   해서 최소한의 대비만 남긴다. */
-#currency-toggle {
-  font-weight: 700;
-  color: #fff;
-}
-
-/* ━━ 그룹 탭 - 아이콘(위) + 라벨(아래) 타일. 앱 런처/모바일 탭바에
-   가까운 인상을 주는 재디자인 - 예전엔 가로 알약형 버튼이었다. ━━━━━━━━ */
-.group-nav {
-  display: flex;
-  align-items: stretch;
-  gap: var(--s1);
-  background: var(--paper);
-  border-bottom: 1px solid var(--rule);
-  padding: var(--s2) var(--s2) 0;
-  overflow-x: auto;
-}
-
-.group-tab {
-  flex: 1 1 0;
-  min-width: 64px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  padding: var(--s2) var(--s2) var(--s2);
-  border-radius: 12px 12px 0 0;
-  cursor: pointer;
-  white-space: nowrap;
-  position: relative;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.group-tab-icon {
-  display: inline-flex;
-  line-height: 1;
-}
-
-.group-tab-icon svg {
-  width: 20px;
-  height: 20px;
-  display: block;
-}
-
-.group-tab-label {
+.sidebar-group-label {
+  padding: var(--s2) var(--s2) 4px;
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--faint);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.group-tab:hover {
-  background: var(--rule2);
-}
-
-.group-tab.active {
-  background: var(--card);
-  color: var(--ink);
-  box-shadow: 0 -1px 8px rgba(26, 29, 33, 0.06);
-}
-
-.group-tab.active::after {
-  /* ★ 세그먼트 배경 대신, 활성 탭 아래에 굵은 밑줄 인디케이터를 그린다 -
-     타일 모양과 어울리는 표시 방식이다. */
-  content: "";
-  position: absolute;
-  left: 14%;
-  right: 14%;
-  bottom: 0;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: var(--ink);
-}
-
-/* ━━ 하위 탭 - 선택된 그룹 안의 화면들, 역시 독립 버튼 모양 ━━━━━━━━━━━━━ */
-.sub-nav {
+.sidebar-item {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  background: var(--card);
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  padding: 9px var(--s2);
+  margin: 1px 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-3);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sidebar-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.sidebar-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-item:hover {
+  background: var(--rule2);
+  color: var(--ink);
+}
+
+.sidebar-item.active {
+  background: var(--accent-weak);
+  color: var(--accent-weak-ink);
+}
+
+.sidebar-item.active .sidebar-item-icon {
+  color: var(--accent-weak-ink);
+}
+
+/* 접힌(아이콘 전용) 사이드바 - 라벨·그룹 제목을 숨기고 아이콘만 가운데. */
+.app-shell.sidebar-collapsed .sidebar-brand-name,
+.app-shell.sidebar-collapsed .sidebar-group-label,
+.app-shell.sidebar-collapsed .sidebar-item-label,
+.app-shell.sidebar-collapsed .sidebar-mode-badge-label {
+  display: none;
+}
+.app-shell.sidebar-collapsed .sidebar-item {
+  justify-content: center;
+  padding: 9px 0;
+}
+/* ★ 실제로 겪은 버그 - 접기 버튼(32px)과 로고(28px)가 가로 한 줄로는
+   64px 레일 폭에 다 안 들어가 로고가 잘려 보였다. 접힌 상태에서는
+   세로로 쌓는다. */
+.app-shell.sidebar-collapsed .sidebar-head {
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2);
+}
+.app-shell.sidebar-collapsed .sidebar-mode-badge {
+  justify-content: center;
+  margin-left: var(--s2);
+  margin-right: var(--s2);
+}
+.app-shell.sidebar-collapsed .sidebar-collapse svg {
+  transform: rotate(180deg);
+}
+
+/* ━━ 본문 열 - 상단바(고정) + 본문 + (모바일 전용) 하단 탭바 ━━━━━━━━━━━━━━━━━━ */
+/* ★★★ 실제로 겪은 버그 - 여기 display:flex 를 줬더니 <main>(margin:0 auto
+   로 가운데 정렬) 이 flex 아이템이 되면서 "stretch 로 꽉 채우기" 대신
+   내용 기준(fit-content) 폭으로 계산돼, 안의 표(white-space:nowrap 셀)가
+   조금만 넓어도 <main> 자체가 뷰포트보다 넓어져 화면 전체가 가로로
+   흘렀다(모바일 390px 에서 524px 까지 벌어짐 - 실제로 겪음). .main-col
+   은 그냥 평범한 블록 컨테이너로 둔다 - 상단바·본문·하단탭바는 원래도
+   위에서 아래로 순서대로 쌓이므로 flex 가 필요 없다(.app-shell 쪽의
+   가로 배치만 flex 면 충분하다). */
+.main-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ★★ 상단바와 하위 탭 칩을 한 상자로 감싼다 - 따로 두고 각자 sticky 를
+   주면 겹치는 문제가 생긴다(예전 밴드+메뉴 버그와 같은 이유). */
+.stickytop {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  width: 100%;
+  background: var(--paper);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: var(--topbar-h);
+  padding: calc(var(--s2) + env(safe-area-inset-top, 0px)) var(--s4) var(--s2);
+  background: var(--paper);
   border-bottom: 1px solid var(--rule);
-  padding: var(--s2) var(--s3);
+}
+
+.topbar-title {
+  flex: 1 1 auto;
+  /* ★ 실제로 겪은 버그 - min-width:0 만 두면 오른쪽 상태 알약·아이콘들이
+     욕심껏 자기 폭을 다 차지하고 제목은 "대..." 처럼 한 글자만 남기고
+     짜부라졌다(모바일 390px 에서 실측). 제목이 최소한 이 정도는 보이게
+     바닥을 깔아 두고, 대신 상태 알약(.band) 쪽을 더 적극적으로 줄인다. */
+  min-width: 72px;
+  margin: 0;
+  font-size: var(--fs-4);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+/* ━━ 상태 알약(#band) - 예전엔 화면 전체 폭의 색깔 띠였다. 이제 상단바 안의
+   작은 알약(점 + 문구)으로 - data-state 가 곧 점 색이다. ━━━━━━━━━━━━━━━━━━━━━ */
+.band {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46vw;
+  padding: 4px var(--s2) 4px 6px;
+  border-radius: 999px;
+  background: var(--rule2);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.band::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+
+.band[data-state="sim"]::before { background: var(--sim); }
+.band[data-state="replay"]::before { background: var(--replay); }
+.band[data-state="web"]::before { background: var(--web); }
+.band[data-state="paper"]::before { background: var(--paper-mode); }
+.band[data-state="live"]::before { background: var(--live); }
+.band[data-state="halt"]::before { background: var(--halt); animation: band-blink 1s ease-in-out infinite; }
+.band[data-state="idle"]::before { background: var(--idle); }
+.band[data-state="degraded"]::before {
+  background: var(--degraded);
+  animation: band-blink 1.4s ease-in-out infinite;
+}
+
+.band .band-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ★ 아이콘 버튼 공통(다크모드 토글·통화 토글·연결 표시등) - 색깔 띠 위 흰
+   글자였던 예전과 달리, 이제 상단바(중립 배경) 위에 있으니 --muted 로. */
+#theme-toggle,
+#currency-toggle,
+#conn-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs-4);
+  line-height: 1;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+#theme-toggle:hover,
+#currency-toggle:hover {
+  color: var(--ink);
+  background: var(--rule2);
+}
+#conn-indicator {
+  cursor: default;
+}
+#conn-indicator[data-mode="down"] { color: var(--fall); }
+#conn-indicator[data-mode="live"] { color: var(--paper-mode); }
+#conn-indicator[data-mode="reconnecting"] .icon,
+#conn-indicator[data-mode="polling"] .icon {
+  animation: icon-spin 1.1s linear infinite;
+}
+@keyframes icon-spin {
+  to { transform: rotate(360deg); }
+}
+/* ★ "원달러 아이콘의 타원형 박스를 없애고" - 알약형 배경·테두리를 없앤 맨
+   글자 스타일. "$"/"₩" 은 아이콘 세트에 없는 글자라 굵게(700)만 준다. */
+#currency-toggle {
+  font-weight: 700;
+}
+
+/* ━━ 하위 탭 칩(.sub-nav) - 데스크톱/태블릿은 사이드바가 모든 탭을 이미
+   보여주므로 숨긴다. 모바일에서만 "지금 그룹 안의 다른 화면"을 가로로 미는
+   알약 줄로 보여준다(그룹이 하나뿐이면 JS 가 hidden 클래스를 붙인다). ━━━━━━━ */
+.sub-nav {
+  display: none;
+  align-items: center;
+  gap: var(--s2);
+  background: var(--paper);
+  padding: 0 var(--s3) var(--s2);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sub-nav a {
   display: block;
   flex: 0 0 auto;
-  padding: var(--s2) var(--s3);
+  padding: 7px var(--s3);
   text-decoration: none;
   border: 1px solid var(--rule);
   border-radius: 999px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
   white-space: nowrap;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .sub-nav a:hover {
-  border-color: var(--ink);
-  color: var(--ink);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .sub-nav a.active {
-  background: var(--rise);
-  color: #fff;
-  border-color: var(--rise);
-  box-shadow: 0 2px 6px rgba(192, 57, 43, 0.28);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* ━━ 하단 탭바(.group-nav) - 모바일 전용, 화면 아래 고정. 그룹 4개만 두고
+   (매매/기록/개선/설정) 각 그룹 안 탭은 위 .sub-nav 칩에서 고른다. ━━━━━━━━━ */
+.group-nav {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  align-items: stretch;
+  background: var(--card);
+  border-top: 1px solid var(--rule);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.group-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: var(--bottombar-h);
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 2px;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.group-tab-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.group-tab.active {
+  color: var(--accent);
 }
 
 .nav-toggle {
   display: none;
+}
+
+/* ━━ 데스크톱·태블릿(≥768px) - 사이드바를 켜고, 모바일 전용 하위 탭
+   칩·하단 탭바는 끈다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (min-width: 768px) {
+  .sidebar {
+    display: flex;
+  }
+  /* ★ .main-col 은 margin-left 로 자리를 비워 둘 필요가 없다 - 사이드바가
+     (position:sticky 로 바뀐 뒤) 여전히 같은 flex 줄 안의 형제 요소라서
+     자기 폭만큼 자연스럽게 옆으로 밀어 준다. */
+  .sub-nav,
+  .group-nav {
+    display: none !important;
+  }
+  main {
+    padding-bottom: var(--s3) !important;
+  }
+}
+
+/* 태블릿(768~1023px) 은 기본이 아이콘 전용 레일이다 - app.js 가 처음
+   그릴 때 폭에 따라 .sidebar-collapsed 를 붙인다(사용자가 직접 편 뒤에는
+   localStorage 값을 우선한다). 여기서는 시각 규칙만 둔다. */
+
+/* ━━ 모바일(<768px) - 사이드바 대신 상단 앱바 + 하위 탭 칩 + 하단 탭바. ━━━━━━━ */
+@media (max-width: 767px) {
+  .sidebar {
+    display: none !important;
+  }
+  .main-col {
+    margin-left: 0;
+  }
+  .topbar {
+    min-height: 52px;
+    gap: var(--s2);
+    padding-left: var(--s3);
+    padding-right: var(--s3);
+  }
+  .band {
+    max-width: 30vw;
+  }
+  /* ★ 버전 표시는 데스크톱에서나 여유로운 부가 정보다 - 좁은 화면에서
+     제목·상태 알약과 자리를 다투게 두지 않는다(눌러서 릴리즈 노트로
+     가는 기능은 사이드바/설정 메뉴로도 갈 수 있다). */
+  #app-version {
+    display: none !important;
+  }
+  .sub-nav {
+    display: flex;
+  }
+  /* ★ 그룹 안에 탭이 하나뿐이면 칩이 의미 없다 - app.js 가 그 경우 이 클래스를 붙인다. */
+  .sub-nav.single-tab {
+    display: none;
+  }
+  .group-nav {
+    display: flex;
+  }
+  /* ★ 본문이 화면 아래 고정 탭바 뒤에 가려지지 않게 - safe-area 까지 더한다. */
+  main {
+    padding-bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom, 0px) + var(--s3)) !important;
+  }
 }
 
 /* ━━ 지표 스트립 (6칸) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -1040,25 +1441,28 @@ button.b {
   align-items: center;
   gap: var(--s2);
   padding: var(--s2) var(--s3);
-  border: 1px solid var(--ink);
-  border-radius: 8px;
-  background: var(--ink);
-  color: var(--ink-contrast);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  /* ★ 재디자인 - 예전엔 배경이 항상 var(--ink)(거의 검정)이었다. 기본
+     동작 버튼은 악센트(인디고)로, 위험/경고 변형(.warn/.danger)은
+     그대로 각자의 색을 쓴다(아래에서 override). */
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(26, 29, 33, 0.12);
-  transition: opacity 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
+  box-shadow: 0 1px 2px rgba(17, 20, 24, 0.12);
+  transition: opacity 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
 button.b:hover {
   opacity: 0.88;
-  box-shadow: 0 2px 6px rgba(26, 29, 33, 0.18);
+  box-shadow: 0 2px 6px rgba(17, 20, 24, 0.18);
 }
 
 button.b:active {
   transform: translateY(1px);
-  box-shadow: 0 1px 1px rgba(26, 29, 33, 0.1);
+  box-shadow: 0 1px 1px rgba(17, 20, 24, 0.1);
 }
 
 button.b:disabled {
@@ -1123,6 +1527,31 @@ button.small {
 .banner.danger {
   background: #fdecec;
   border-color: #e2a3a3;
+  color: var(--rise);
+}
+
+/* ★ 다크모드에는 위 두 배너에 대응하는 값이 없어서, 밝은 배경(#fff7e6 등)이
+   어두운 화면에서 튀어 보이는 문제가 있었다(실제로 겪음) - 어두운 톤으로 맞춘다. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner.warn {
+    background: #2a2210;
+    border-color: #6b5116;
+    color: #f0c36d;
+  }
+  :root:not([data-theme="light"]) .banner.danger {
+    background: #2a1616;
+    border-color: #6b2b2b;
+    color: var(--rise);
+  }
+}
+:root[data-theme="dark"] .banner.warn {
+  background: #2a2210;
+  border-color: #6b5116;
+  color: #f0c36d;
+}
+:root[data-theme="dark"] .banner.danger {
+  background: #2a1616;
+  border-color: #6b2b2b;
   color: var(--rise);
 }
 
@@ -1277,6 +1706,255 @@ button.small {
   color: var(--ink-contrast);
 }
 
+/* ━━ 아이콘 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   UI.icon() 이 만드는 <svg class="icon"> 의 실제 크기는 여기서 정한다 -
+   JS 가 넣는 width/height 속성은 CSS 가 없을 때의 대비값일 뿐이다. */
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+
+.icon-lg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 내비게이션 아이콘 - 버튼 글자 크기와 무관하게 늘 같은 크기로. */
+.sidebar-item-icon .icon,
+.sidebar-brand-logo .icon {
+  width: 18px;
+  height: 18px;
+}
+.sidebar-brand-logo .icon {
+  width: 16px;
+  height: 16px;
+}
+.group-tab-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+.sidebar-collapse .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ━━ 공용 레이아웃 부품 (B·C 코스가 패널 내용을 짤 때 쓰는 조립 부품) ━━━━━━━━
+   ★★★ 다른 두 코스가 그대로 갖다 쓸 수 있게 이름을 고정한다 - 여기서
+   클래스 이름을 바꾸면 그쪽 패널이 스타일 없이 뜬다. */
+
+/* 화면 맨 위 "제목 + 오른쪽 버튼들" 줄 - 모바일에서는 줄바꿈. */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.page-head h2,
+.page-head h1 {
+  margin: 0;
+  border: none;
+  padding: 0;
+}
+
+.page-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+/* 핵심 지표 카드 그리드 - 대시보드류 화면 맨 위에 자주 쓴다. */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s3);
+}
+
+@media (max-width: 767px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.kpi {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpi-value {
+  font-size: var(--fs-6);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpi-value.rise { color: var(--rise); }
+.kpi-value.fall { color: var(--fall); }
+
+.kpi-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 접이식 카드 - <details class="acc"><summary>제목<span class="acc-meta">…
+   </span></summary><div class="acc-body">…</div></details>. .theme 와 거의
+   같은 모양이지만 이름이 도메인 중립적이라(테마 선정 화면 전용이 아니게)
+   여러 화면에서 재사용한다. */
+details.acc {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+details.acc > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  cursor: pointer;
+  padding: var(--s3);
+  font-weight: 600;
+  list-style: none;
+}
+
+details.acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.acc > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  color: var(--muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.15s ease;
+}
+
+details.acc[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details.acc .acc-meta {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+details.acc .acc-body {
+  padding: 0 var(--s3) var(--s3);
+  border-top: 1px solid var(--rule2);
+  padding-top: var(--s3);
+}
+
+/* 2·3단 반응형 그리드 - 카드 여러 개를 나란히. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+  min-width: 0;
+  align-items: start;
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+  min-width: 0;
+  align-items: start;
+}
+@media (max-width: 1023px) {
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 767px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+}
+
+/* 표를 감싸 가로 스크롤만 나게(뷰포트 자체는 안 늘어난다) - .hscroll 과
+   같은 목적의 새 이름(이번 재편에서 쓰는 부품들과 이름을 맞춘다). */
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 내용이 길어질 수 있는 목록을 정해진 높이 안에 가두고 스크롤 - 화면이
+   세로로 한없이 길어지는 것을 막는다(이번 재편의 핵심 요청). */
+.scroll-box {
+  max-height: 60vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 가로로 미는 알약(칩) 한 줄 - 필터·태그 선택 등에 쓴다. */
+.chips {
+  display: flex;
+  gap: var(--s2);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px; /* 스크롤바가 칩을 가리지 않게 */
+}
+
+.chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px var(--s3);
+  min-height: 32px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* 데이터 없음 - 가운데 정렬된 옅은 안내 문구. */
+.empty {
+  padding: var(--s5) var(--s3);
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* ━━ 설정 폼 (forms.js) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 .field {
   margin-bottom: var(--s3);
@@ -1310,8 +1988,8 @@ button.small {
 .field input[type="time"]:focus-visible,
 .field select:focus-visible {
   outline: none;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(26, 29, 33, 0.08);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 
 .field .suffix {
@@ -1546,9 +2224,9 @@ main {
 }
 
 .config-quicknav-chip.active {
-  background: var(--ink);
-  color: var(--ink-contrast);
-  border-color: var(--ink);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 
 .config-actions {
@@ -1565,33 +2243,23 @@ main {
   z-index: 5;
 }
 @media (max-width: 768px) {
-  .group-tab {
-    min-width: 52px;
-    padding: var(--s2) var(--s1) var(--s2);
-  }
-
-  .group-tab-icon svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .group-tab-label {
-    font-size: 10px;
-  }
-
-  .sub-nav a {
-    /* ★ 44px 최소 터치 영역 권장 기준에 맞춰 세로 여백을 살짝 늘린다 -
-       한 줄에 담는 레이아웃(gap·overflow-x)은 그대로 둔다. */
-    padding: 10px var(--s3);
-    font-size: 12px;
-  }
-
+  /* ★ 그룹탭(.group-tab)·하위탭 칩(.sub-nav a) 크기는 이제 새 하단
+     탭바/칩 섹션(위 "앱 셸" 부분)에서 한 번에 정한다 - 여기 있던 예전
+     타일형 그룹탭 전용 오버라이드는 지웠다. */
   .cols {
     grid-template-columns: 1fr;
   }
 
   .strip {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* ★★ 통합 수정 - .config-actions 는 설정 화면(팀 C)이 팀 A의 모바일
+     하단 고정 탭바 없이 만들어져, "화면 하단"에 붙인 저장·되돌리기
+     버튼이 실제로는 새 하단 탭바(#group-nav) 뒤에 가려졌다(실제로 겪음 -
+     통합 QA). 모바일에서만 하단 탭바 높이만큼 띄운다. */
+  .config-actions {
+    bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -1615,7 +2283,7 @@ main {
   /* ★ 배경에 아주 옅은 방향성 그라데이션만 더해 완전히 평평해 보이지 않게 한다 -
      채도·명도 변화가 작아 --paper 의 대비 비율에는 영향이 없다. */
   background:
-    radial-gradient(600px 400px at 15% 10%, rgba(26, 29, 33, 0.035), transparent 60%),
+    radial-gradient(600px 400px at 15% 10%, rgba(17, 20, 24, 0.035), transparent 60%),
     var(--paper);
 }
 
@@ -1649,8 +2317,8 @@ main {
 
 .login-box input:focus-visible {
   outline: none;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(26, 29, 33, 0.1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 
 
@@ -1716,9 +2384,14 @@ table.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   /* 성과 요약 5칸도 한 줄 */
   .strip.strip-perf { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
-  /* 탭·필터 버튼: 한 줄에 다 들어가면 한 줄, 넘치면 줄바꿈 - 가로 스크롤로 숨기면 뒤쪽 탭(환율·암호화폐)이 안 보였다 */
-  .seg { display: flex; flex-wrap: wrap; max-width: 100%; }
-  .seg button { flex: 1 1 auto; padding: var(--s2) 8px; white-space: nowrap; }
+  /* ★ 재디자인 지침 - "탭·필터는 세로로 길어지지 않게, 가로로 미는 줄로".
+     예전엔 줄바꿈이라 화면이 세로로 계속 늘어났다(스크롤 회피가 이번
+     재편의 핵심 요청이다) - 이제 한 줄로 고정하고 넘치면 옆으로 민다.
+     뒤쪽 탭이 "안 보인다"는 예전 우려는, 화면 전체에 가로 스크롤 칩
+     UI(.chips/.sub-nav 등)를 이번에 일관되게 쓰기 시작하면서 사용자가
+     이미 그 패턴에 익숙해졌다고 보고 지침대로 되돌린다. */
+  .seg { display: flex; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .seg button { flex: 0 0 auto; padding: var(--s2) var(--s3); min-height: 36px; white-space: nowrap; }
   .seg button + button { border-left: 1px solid var(--rule); }
   .filter-row { flex-wrap: wrap; gap: var(--s2); }
 

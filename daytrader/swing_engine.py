@@ -54,7 +54,7 @@ from daytrader.playbook import Bar, Playbook
 from daytrader.screener import Screener
 from daytrader.signals import sma
 from daytrader.swing_broker import NotOwnedError, SwingPosition, SwingPositionBook, PaperSwingBroker
-from daytrader.timeutil import day_str, iso, now_kst, parse_dt
+from daytrader.timeutil import KST, day_str, iso, now_kst, parse_dt
 
 log = logging.getLogger(__name__)
 
@@ -66,9 +66,11 @@ def _now_ts() -> float:
 
 
 def _fmt_ts(ts: float) -> str:
+    """★★★ [1-10] datetime.now()(호스트 로컬 시각)로 비교하면 UTC 호스트에서
+    "오늘"의 경계가 9시간 어긋난다 - timeutil 이 강제하는 KST 기준으로 통일한다."""
     try:
-        dt = datetime.fromtimestamp(ts)
-        if dt.date() == datetime.now().date():
+        dt = datetime.fromtimestamp(ts, tz=KST)
+        if dt.date() == now_kst().date():
             return dt.strftime("%H:%M")
         return dt.strftime("%m/%d %H:%M")
     except Exception:

@@ -76,6 +76,44 @@ class FakeTossClient:
         return [{"symbol": "NVDA"}, {"symbol": "AAPL"}]
 
 
+class FakeUncertainTossClient:
+    """★★★ [1-5] network-uncertain 타임아웃을 재현하는 가짜 클라이언트 -
+    fail_create=True 면 create_order() 가 예외를 던지지만 주문은 이미
+    "접수된 것"으로 처리한다(daytrader/tossapi.py 의 network-uncertain
+    재현, test_live_safety.py 의 FakeToss 와 같은 설계).
+    findable=False 면 get_orders() 조회로도 끝내 못 찾는 상황(진짜로
+    접수 여부를 모르는 상태)을 재현한다.
+    """
+
+    account_seq = 0
+
+    def __init__(self, fail_create: bool = True, findable: bool = True):
+        self.orders: list = []
+        self.fail_create = fail_create
+        self.findable = findable
+        self._seq = 0
+
+    def create_order(self, symbol, side, orderType, quantity, price=None, timeInForce="DAY", clientOrderId=None):
+        self._seq += 1
+        order_id = f"oid-{self._seq}"
+        self.orders.append({
+            "orderId": order_id, "clientOrderId": clientOrderId, "symbol": symbol,
+            "side": side, "quantity": quantity,
+        })
+        if self.fail_create:
+            from daytrader.tossapi import TossApiError
+            raise TossApiError(0, "network-uncertain", "연결 불확실")
+        return {"orderId": order_id}
+
+    def get_orders(self, **kwargs):
+        if not self.findable:
+            return []
+        coid = kwargs.get("clientOrderId")
+        if coid:
+            return [o for o in self.orders if o.get("clientOrderId") == coid]
+        return self.orders
+
+
 def _cfg(tmp_dir: str, watchlist: list, mode: str = "paper"):
     cfg = load_config(CONFIG_PATH)
     cfg.state_dir = tmp_dir
@@ -1062,6 +1100,120 @@ def test_halt_resumes_when_session_changes() -> None:
     check("세션이 바뀌면(애프터마켓) 쿨다운 시간이 안 지났어도 즉시 재개", info2["halted"] is False, info2)
 
 
+def test_daily_reset_uses_kst_not_host_tz() -> None:
+    """★★★ [1-10] 실제로 겪을 뻔한 버그 - _is_today_ts/_closed_today/
+    _reset_if_new_day 가 datetime.now()(호스트 로컬 시각)로 "오늘"을 가르면,
+    UTC 호스트에서는 한국 시각 오전 9시 이전에도 이미 다음 날로 넘어간 것으로
+    착각해 일일 손실 한도·연속 손절 중단이 장중(KST) 에 조용히 리셋된다.
+    TZ=UTC 로 호스트를 재현하고, "지금"을 KST 새벽 2시로 고정해(UTC 로는
+    아직 전날 17시) 예전 버그라면 자정을 이미 넘겼다고 잘못 보는 경계를 검증한다.
+    """
+    print("\n== ★★★ [1-10] 일일 리셋이 호스트 로컬 자정이 아니라 KST 자정 기준(UTC 호스트) ==")
+    import time as _time
+
+    import daytrader.overseas_engine as oe
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+    orig_now_kst_aware = oe._now_kst_aware
+    try:
+        # ★ "지금"을 KST 2026-01-05 새벽 2시로 고정한다(UTC 로는 2026-01-04 17:00).
+        fixed_now = datetime(2026, 1, 5, 2, 0, tzinfo=oe.KST)
+        oe._now_kst_aware = lambda: fixed_now
+
+        yesterday_kst_2350 = datetime(2026, 1, 4, 23, 50, tzinfo=oe.KST).timestamp()
+        today_kst_0010 = datetime(2026, 1, 5, 0, 10, tzinfo=oe.KST).timestamp()
+
+        check("KST 자정 전(어제 23:50) 청산은 '오늘'이 아님", not oe._is_today_ts(yesterday_kst_2350))
+        check("KST 자정 이후(오늘 00:10) 청산은 '오늘'로 잡힘", oe._is_today_ts(today_kst_0010))
+
+        closed = [
+            {"exit_time": yesterday_kst_2350, "pnl": -100},
+            {"exit_time": today_kst_0010, "pnl": -200},
+        ]
+        today_only = oe._closed_today(closed)
+        check("_closed_today 도 KST 자정 기준으로 정확히 오늘 것만 포함",
+              len(today_only) == 1 and today_only[0]["pnl"] == -200, today_only)
+
+        # ★ OverseasState._reset_if_new_day() 도 같은 헬퍼를 쓴다 - 날짜가
+        # "KST 기준 오늘"로 자리잡아야 하고, 이미 오늘 날짜면 리셋하면 안 된다.
+        d = tempfile.mkdtemp()
+        state = oe.OverseasState(os.path.join(d, "overseas_state.json"))
+        state.date = day_str_of(fixed_now)
+        state.consecutive_losses = 3
+        state._reset_if_new_day()
+        check("이미 KST 오늘 날짜면 연속손절 카운트를 리셋하지 않음", state.consecutive_losses == 3)
+
+        state.date = "2026-01-04"  # KST 로 어제
+        state._reset_if_new_day()
+        check("KST 로 날짜가 바뀌었으면 리셋함", state.consecutive_losses == 0 and state.date == day_str_of(fixed_now))
+    finally:
+        oe._now_kst_aware = orig_now_kst_aware
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+
+
+def day_str_of(dt) -> str:
+    return dt.strftime("%Y-%m-%d")
+
+
+def test_overseas_live_buy_no_double_order_on_timeout() -> None:
+    """★★★ [1-5] 실제로 겪을 뻔한 버그 - LiveOverseasBroker.buy()/sell() 이
+    client.create_order() 를 직접 불러서, 타임아웃(network-uncertain) 뒤
+    다음 스캔에서 같은 종목을 재매수해 2배로 살 수 있었다. 국내주식과 같은
+    설계(주문 의도 선기록 + clientOrderId + 재전송 대신 조회)로 막는다.
+    """
+    print("\n== ★★★ [1-5] 해외주식 실거래 - 타임아웃 뒤 재전송하지 않고 조회로 확인 ==")
+    import time as _time
+
+    import daytrader.orders as orders_mod
+    from daytrader.orders import OrderBook, OrderUncertainError
+    from daytrader.overseas_broker import LiveOverseasBroker, OverseasPositionBook
+
+    orig_sleep = orders_mod.time.sleep
+    orders_mod.time.sleep = lambda s: None  # resolve_uncertain 재시도 대기를 없애 테스트를 빠르게.
+    try:
+        # ★ 조회하면 기존 주문을 찾는 경우 - 매수가 정상적으로 인계되어야 한다.
+        with tempfile.TemporaryDirectory() as d:
+            client = FakeUncertainTossClient(fail_create=True, findable=True)
+            book = OverseasPositionBook()
+            broker = LiveOverseasBroker(client, book=book, order_book=OrderBook(d))
+
+            pos = broker.buy("AAPL", 1_000_000, 150.0)
+            check("★★이중 주문 없음(실제 주문 1건만 나감)", len(client.orders) == 1, len(client.orders))
+            check("조회로 기존 주문을 찾아 매수가 정상 인계됨", pos is not None and book.owns("AAPL"))
+
+        # ★ 조회해도 끝내 못 찾는 경우 - 재전송하지 않고 halt 되어야 한다.
+        with tempfile.TemporaryDirectory() as d:
+            client2 = FakeUncertainTossClient(fail_create=True, findable=False)
+            book2 = OverseasPositionBook()
+            broker2 = LiveOverseasBroker(client2, book=book2, order_book=OrderBook(d))
+
+            try:
+                broker2.buy("AAPL", 1_000_000, 150.0)
+                check("★조회로도 확인 못 하면 OrderUncertainError 로 멈춤", False, "예외 없이 통과됨 - 심각한 버그")
+            except OrderUncertainError:
+                check("★조회로도 확인 못 하면 OrderUncertainError 로 멈춤", True)
+            check("확인 못 하면 포지션이 기록되지 않음(다음 스캔에서 중복 매수 방지)", not book2.owns("AAPL"))
+            check("★★★ 브로커가 halt 됨 - 다음 스캔에서도 재시도하지 않음", broker2.halted, broker2.halt_reason)
+            check("주문은 1건만 나감(재전송 없음)", len(client2.orders) == 1, len(client2.orders))
+
+        # ★ order_book 을 안 넘기면(연결이 빠지면) 실거래를 아예 못 내야 한다 -
+        # 안전장치가 조용히 빠진 채로 실거래가 나가면 안 된다.
+        broker3 = LiveOverseasBroker(FakeUncertainTossClient(fail_create=False), book=OverseasPositionBook())
+        try:
+            broker3.buy("AAPL", 1_000_000, 150.0)
+            check("★order_book 없이는 실거래 자체를 거부함", False, "order_book 없이도 주문이 나감 - 심각한 버그")
+        except RuntimeError:
+            check("★order_book 없이는 실거래 자체를 거부함", True)
+    finally:
+        orders_mod.time.sleep = orig_sleep
+
+
 def main() -> None:
     tests = [
         test_market_hours, test_trading_24h_session, test_us_theme_selection, test_manage_positions_only, test_snapshot_has_current_price, test_theme_reselect_on_phase_change, test_reuses_same_account_and_playbook,
@@ -1075,6 +1227,7 @@ def main() -> None:
         test_overseas_rejects_non_us_tickers, test_cash_available_survives_none, test_update_peak_survives_none, test_survives_non_dict_api_rows, test_default_watchlist_has_mag7_and_ai_chips, test_state_restore_survives_corrupt_records, test_broker_survives_none_values, test_exit_survives_broken_position_fields,
         test_auto_select_skipped_when_market_closed, test_empty_config_values_fall_back_to_defaults,
         test_us_phase_distinguishes_sessions, test_halt_resumes_when_session_changes,
+        test_overseas_live_buy_no_double_order_on_timeout, test_daily_reset_uses_kst_not_host_tz,
     ]
     for t in tests:
         t()

@@ -259,6 +259,38 @@ def test_oco_cancel_fail() -> None:
     check("취소 실패 시 oco_is_open() 은 True (안전한 쪽으로)", broker.oco_is_open(oco_id) is True)
 
 
+# ━━ 매수 가능 금액 0원 처리 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_cash_zero_not_treated_as_missing() -> None:
+    """★★★ 실제로 겪은 버그 - `bp.get("cash") or bp.get("buyingPower") or 0` 은
+    cash 가 정확히 0원이어도(정상적으로 다 써서 없는 상태) "없는 값"으로 보고
+    buyingPower 필드로 넘어간다. cash 와 buyingPower 가 다른 값을 담고 있으면
+    0원인 계좌를 매수 가능한 것처럼 잘못 본다. None 과 0 을 구분해야 한다.
+    """
+    print("\n== 매수 가능 금액이 정확히 0원일 때 ==")
+    from daytrader.broker import LiveBroker
+
+    class _BuyingPowerClient:
+        def __init__(self, cash, buying_power):
+            self._cash = cash
+            self._bp = buying_power
+
+        def buying_power(self):
+            return {"cash": self._cash, "buyingPower": self._bp}
+
+    # cash=0(정상적으로 다 썼다) 인데 buyingPower 는 다른(더 큰) 값을 담고 있다.
+    broker = LiveBroker(_live_cfg(), _BuyingPowerClient(0, 5_000_000), _dummy_book())
+    check("★cash=0 이면 buyingPower 로 새지 않고 0을 그대로 씀", broker.cash() == 0, str(broker.cash()))
+
+    # cash 필드가 아예 없으면(None) buyingPower 로 정상적으로 넘어가야 한다.
+    broker2 = LiveBroker(_live_cfg(), _BuyingPowerClient(None, 5_000_000), _dummy_book())
+    check("cash 필드가 없으면 buyingPower 로 대체", broker2.cash() == 5_000_000, str(broker2.cash()))
+
+    # 둘 다 없으면 0.
+    broker3 = LiveBroker(_live_cfg(), _BuyingPowerClient(None, None), _dummy_book())
+    check("둘 다 없으면 0", broker3.cash() == 0, str(broker3.cash()))
+
+
 # ━━ 계좌 대조 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class _FakeState:
@@ -334,6 +366,60 @@ def test_reconcile() -> None:
         reconcile(client3, state3, cfg, journal, ledger)
         check("★수량 불일치를 계좌 기준으로 보정(20->15)", state3.positions["005930"].quantity == 15)
 
+        # ★★★ 실제로 겪은 버그 - 수량만 내부적으로 맞추고 서버 OCO(조건부
+        # 손절/익절)는 옛 수량 그대로 방치했다. broker 를 넘기면 engine.py
+        # 청산/분할매도와 같은 패턴(취소 후 재등록)으로 서버 OCO 도 새
+        # 수량으로 다시 걸어야 한다.
+        from daytrader.broker import LiveBroker
+
+        state4 = _FakeState()
+        state4.positions["005930"] = Position(
+            symbol="005930", name="삼성전자", theme="t", quantity=20, entry_price=10000,
+            entry_time=now_kst(), peak_price=10500, oco_id="existing-oco", entry_volume=1000,
+            verdict_id="v1", why="", technique="fixed",
+        )
+        client4 = FakeToss()
+        client4.holdings_data = [{"symbol": "005930", "quantity": 15}]
+        # ★ id 를 FakeToss.create_oco() 가 만드는 형식(oco-N)과 겹치지 않게 둔다 -
+        # 겹치면 재등록으로 새로 생긴 주문이 옛 주문과 같은 id 로 보여 테스트가
+        # 착각할 수 있다.
+        client4.conditional_orders_data = [{"conditionalOrderId": "existing-oco", "status": "OPEN", "symbol": "005930"}]
+        broker4 = LiveBroker(cfg, client4, _dummy_book())
+
+        diffs4 = reconcile(client4, state4, cfg, journal, ledger, broker=broker4)
+        check("수량은 여전히 계좌 기준으로 보정됨(20->15)", state4.positions["005930"].quantity == 15)
+        check(
+            "★수량 불일치 시 broker 를 넘기면 서버 OCO 도 새 수량으로 재등록",
+            state4.positions["005930"].oco_id is not None and state4.positions["005930"].oco_id != "existing-oco",
+            str(state4.positions["005930"].oco_id),
+        )
+        old_oco = next(o for o in client4.conditional_orders_data if o["conditionalOrderId"] == "existing-oco")
+        check("옛 OCO는 취소됨", old_oco["status"] == "CANCELLED")
+        new_ocos = [o for o in client4.conditional_orders_data if o["conditionalOrderId"] != "existing-oco"]
+        check("새 OCO가 생성됨", len(new_ocos) == 1 and new_ocos[0]["status"] == "OPEN")
+        mismatch_diff4 = next(d_ for d_ in diffs4 if d_.kind == "qty_mismatch")
+        check("action에 OCO 재등록이 기록됨(조용히 넘기지 않음)", "OCO" in mismatch_diff4.action, mismatch_diff4.action)
+
+        # OCO 취소가 실패하면(서버 주문이 여전히 살아있다) - 조용히 넘어가지 않고
+        # 옛 OCO를 그대로 둔 채(이중 주문 방지) 실패를 detail·journal(halt)에 남긴다.
+        state5 = _FakeState()
+        state5.positions["005930"] = Position(
+            symbol="005930", name="삼성전자", theme="t", quantity=20, entry_price=10000,
+            entry_time=now_kst(), peak_price=10500, oco_id="existing-oco-2", entry_volume=1000,
+            verdict_id="v1", why="", technique="fixed",
+        )
+        client5 = FakeToss()
+        client5.holdings_data = [{"symbol": "005930", "quantity": 15}]
+        client5.conditional_orders_data = [{"conditionalOrderId": "existing-oco-2", "status": "OPEN", "symbol": "005930"}]
+        client5.cancel_ok = False  # 취소 자체가 실패한다.
+        broker5 = LiveBroker(cfg, client5, _dummy_book())
+
+        diffs5 = reconcile(client5, state5, cfg, journal, ledger, broker=broker5)
+        check("취소 실패 시 옛 OCO를 그대로 둠(이중 매도/이중 주문 방지)",
+              state5.positions["005930"].oco_id == "existing-oco-2")
+        mismatch_diff5 = next(d_ for d_ in diffs5 if d_.kind == "qty_mismatch")
+        check("★취소 실패를 조용히 넘기지 않고 detail에 남김", "취소하지 못해" in mismatch_diff5.detail, mismatch_diff5.detail)
+
 
 # ━━ 고아 주문 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -381,6 +467,55 @@ def test_preflight() -> None:
         client_open_order = FakeToss()
         client_open_order.open_orders_data = [{"orderId": "1", "clientOrderId": "x"}]
         check("★미체결주문 차단", not preflight(cfg, client_open_order, ledger=ledger)["ok"])
+
+        # ★★★ 실제로 겪은 버그 - 보유 종목이 있는 상태로 재시작(정상적인
+        # 사용법 - allow_overnight 기본값 True)하면 그 종목의 서버 OCO 가
+        # 미체결로 남아 있는 게 당연한데, 예전엔 "미체결 주문이 하나라도
+        # 있으면 무조건 차단"이라 실거래를 아예 시작할 수 없었다. 지금 보유
+        # 중인 종목의 주문·조건부 주문은 통과시키고, 그 종목과 무관한(고아)
+        # 것만 막아야 한다.
+        from daytrader.broker import Position
+        from daytrader.timeutil import now_kst
+
+        held_positions = {
+            "005930": Position(
+                symbol="005930", name="삼성전자", theme="t", quantity=10, entry_price=70000,
+                entry_time=now_kst(), peak_price=70000, oco_id="oco-held", entry_volume=0,
+                verdict_id="v", why="", technique="fixed",
+            )
+        }
+
+        client_own_position_order = FakeToss()
+        client_own_position_order.open_orders_data = [{"orderId": "1", "clientOrderId": "x", "symbol": "005930"}]
+        client_own_position_order.conditional_orders_data = [
+            {"conditionalOrderId": "oco-held", "status": "OPEN", "symbol": "005930"}
+        ]
+        result_held = preflight(cfg, client_own_position_order, ledger=ledger, positions=held_positions)
+        check(
+            "★보유 중인 종목과 연결된 미체결 주문·조건부 주문은 재시작을 막지 않음",
+            result_held["ok"], "; ".join(c["detail"] for c in result_held["blocking"]),
+        )
+
+        client_orphan_order = FakeToss()
+        client_orphan_order.open_orders_data = [{"orderId": "2", "clientOrderId": "y", "symbol": "000660"}]
+        client_orphan_order.conditional_orders_data = [
+            {"conditionalOrderId": "oco-held", "status": "OPEN", "symbol": "005930"}
+        ]
+        result_orphan = preflight(cfg, client_orphan_order, ledger=ledger, positions=held_positions)
+        check(
+            "보유 종목과 무관한(고아) 미체결 주문은 여전히 차단",
+            not result_orphan["ok"], "; ".join(c["detail"] for c in result_orphan["blocking"]),
+        )
+
+        client_orphan_cond = FakeToss()
+        client_orphan_cond.conditional_orders_data = [
+            {"conditionalOrderId": "oco-unknown", "status": "OPEN", "symbol": "035420"}
+        ]
+        result_orphan_cond = preflight(cfg, client_orphan_cond, ledger=ledger, positions=held_positions)
+        check(
+            "보유 종목과 무관한(고아) 조건부 주문은 여전히 차단",
+            not result_orphan_cond["ok"], "; ".join(c["detail"] for c in result_orphan_cond["blocking"]),
+        )
 
         client_no_cash = FakeToss()
         client_no_cash.cash = 0
@@ -903,7 +1038,6 @@ def test_overseas_status_exposes_auto_select_when_engine_off() -> None:
     정확히 알 수 있어야 한다.
     """
     print("\n== 엔진이 꺼져 있어도 /api/overseas/status가 auto_select를 정확히 노출 ==")
-    import asyncio
     import shutil
     import tempfile as _tempfile
     import daytrader.server as server
@@ -921,11 +1055,10 @@ def test_overseas_status_exposes_auto_select_when_engine_off() -> None:
         raw["overseas"]["auto_select"] = True
         yaml.dump(raw, open(server.CONFIG_PATH, "w", encoding="utf-8"), allow_unicode=True)
 
-        async def scenario():
-            status = await server.overseas_status()
-            check("엔진 꺼진 상태에서도 auto_select=True가 정확히 노출됨", status.get("auto_select") is True)
-
-        asyncio.run(scenario())
+        # ★★ [8-1] overseas_status() 는 이제 일반 def(동기) 라우트다(FastAPI 가
+        # 스레드풀에서 돌린다) - 더 이상 코루틴이 아니라서 await 없이 직접 부른다.
+        status = server.overseas_status()
+        check("엔진 꺼진 상태에서도 auto_select=True가 정확히 노출됨", status.get("auto_select") is True)
     finally:
         server.CONFIG_PATH = orig_config_path
         server._overseas_engine = orig_engine
@@ -938,7 +1071,6 @@ def test_overseas_ticker_uses_auto_selected_watchlist() -> None:
     실시간 시세를 종목선정 화면에서 아예 볼 수 없었던 문제다.
     """
     print("\n== /api/overseas/ticker가 고정 목록이 아니라 자동선정 결과를 조회함 ==")
-    import asyncio
     import shutil
     import tempfile as _tempfile
     import daytrader.server as server
@@ -976,14 +1108,12 @@ def test_overseas_ticker_uses_auto_selected_watchlist() -> None:
 
         market_mod._fetch_yahoo_session_group = fake_fetch
 
-        async def scenario():
-            await server.overseas_ticker()
-            symbols = [t[0] for t in captured.get("items", [])]
-            check("★★★ ticker가 자동선정 결과(TSLA, GOOGL)를 조회함", symbols[:2] == ["TSLA", "GOOGL"], str(symbols))
-            # ★ 직접 추가한 관심 종목은 자동선정·테마와 별개로 항상 거래 대상이라 함께 조회한다.
-            check("관심 종목(AAPL 등)도 함께 조회함", all(x in symbols for x in ("AAPL", "NVDA", "MSFT")), str(symbols))
-
-        asyncio.run(scenario())
+        # ★★ [8-1] overseas_ticker() 도 이제 일반 def(동기) 라우트다 - await 없이 직접 부른다.
+        server.overseas_ticker()
+        symbols = [t[0] for t in captured.get("items", [])]
+        check("★★★ ticker가 자동선정 결과(TSLA, GOOGL)를 조회함", symbols[:2] == ["TSLA", "GOOGL"], str(symbols))
+        # ★ 직접 추가한 관심 종목은 자동선정·테마와 별개로 항상 거래 대상이라 함께 조회한다.
+        check("관심 종목(AAPL 등)도 함께 조회함", all(x in symbols for x in ("AAPL", "NVDA", "MSFT")), str(symbols))
     finally:
         server.CONFIG_PATH = orig_config_path
         server._overseas_engine = orig_engine
@@ -1004,16 +1134,23 @@ def test_journal_shows_only_trades() -> None:
     import daytrader.server as server
     from daytrader.journal import Journal
 
+    from daytrader import config as config_mod
+
     tmpdir = _tempfile.mkdtemp()
-    state_dir = _tempfile.mkdtemp()
+    state_dir = os.path.join(tmpdir, "state")
     orig_config_path = server.CONFIG_PATH
+    orig_app_dir = config_mod.app_dir
     try:
         server.CONFIG_PATH = os.path.join(tmpdir, "config.yaml")
         shutil.copy(CONFIG_PATH, server.CONFIG_PATH)
+        # ★ [2-3] state_dir 은 이제 app_dir() 밖(절대경로·..)을 가리킬 수 없다 - 여기서는
+        # config.yaml 에는 상대경로("state")만 적고, app_dir() 자체를 이 tmpdir 로 바꿔
+        # 격리한다(실제 서버는 app_dir() 을 바꾸지 않는다 - 테스트 전용 격리 방법이다).
+        config_mod.app_dir = lambda: tmpdir
 
         import yaml
         raw = yaml.safe_load(open(server.CONFIG_PATH, encoding="utf-8"))
-        raw["state_dir"] = state_dir
+        raw["state_dir"] = "state"
         yaml.dump(raw, open(server.CONFIG_PATH, "w", encoding="utf-8"), allow_unicode=True)
 
         j = Journal(state_dir, mode="sim")
@@ -1039,11 +1176,12 @@ def test_journal_shows_only_trades() -> None:
         asyncio.run(scenario())
     finally:
         server.CONFIG_PATH = orig_config_path
+        config_mod.app_dir = orig_app_dir
 
 
 def main() -> None:
     tests = [
-        test_idempotency, test_oco_is_open, test_oco_cancel_fail, test_reconcile,
+        test_idempotency, test_oco_is_open, test_oco_cancel_fail, test_cash_zero_not_treated_as_missing, test_reconcile,
         test_cleanup_orphans, test_preflight, test_degraded_mode, test_never_sell_unowned, test_live_guard,
         test_config_save_locked_per_market, test_paper_mode_is_not_restricted_by_cash,
         test_account_holdings_uses_real_api_regardless_of_engine_mode,

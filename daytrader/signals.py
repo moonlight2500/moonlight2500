@@ -63,17 +63,23 @@ def vwap(bars):
 
 
 def atr(bars, n=14):
-    """평균 진범위(ATR). TR=max(고저폭, |고가-전종가|, |저가-전종가|) 의 평균.
-    종목별 변동성 크기를 재서 손절폭·목표폭을 정하는 데 쓴다.
+    """평균 진범위(ATR, Wilder 1978). TR=max(고저폭, |고가-전종가|, |저가-전종가|).
+    최초값은 앞 n개 TR 의 단순평균으로 시작(seed)하고, 그 뒤로는
+    Wilder 평활(이전값*(n-1)+현재TR)/n 로 이어간다 - RSI/ADX 와 같은 방식
+    (_wilder_smooth 공유). 단순 SMA 보다 과거 변동성을 더 오래 반영해
+    손절선이 덜 출렁인다.
     """
     if len(bars) < n + 1:
         return NAN
     trs = []
-    for i in range(len(bars) - n, len(bars)):
+    for i in range(1, len(bars)):
         pc = bars[i - 1].close
         tr = max(bars[i].high - bars[i].low, abs(bars[i].high - pc), abs(bars[i].low - pc))
         trs.append(tr)
-    return sum(trs) / n
+    tr_s = _wilder_smooth(trs, n)
+    if not tr_s:
+        return NAN
+    return tr_s[-1] / n
 
 
 def adx(bars, n=14):

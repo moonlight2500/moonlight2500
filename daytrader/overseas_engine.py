@@ -35,8 +35,10 @@ from daytrader.overseas_broker import (
     LiveOverseasBroker, NotOwnedError, OverseasPosition, OverseasPositionBook, PaperOverseasBroker,
 )
 from daytrader import news_guard, sizing
+from daytrader.orders import OrderBook
 from daytrader.perf_stats import summarize_closed_trades
 from daytrader.playbook import Bar, Playbook
+from daytrader.timeutil import KST, day_str, now_kst as _now_kst_aware
 
 log = logging.getLogger(__name__)
 
@@ -318,17 +320,23 @@ def _fmt_ts(ts: float) -> str:
 
 
 def _is_today_ts(ts) -> bool:
+    """★★★ 실제로 겪을 뻔한 버그 - datetime.now()(호스트 로컬 시각)로 "오늘"을
+    가르면, UTC 호스트에서는 자정이 한국 시각 오전 9시가 되어 장중에 일일
+    손실 한도·거래횟수가 조용히 리셋된다. timeutil 이 강제하는 KST 기준으로
+    통일한다.
+    """
     if not ts:
         return False
     try:
-        return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d") == datetime.now().strftime("%Y-%m-%d")
+        return day_str(datetime.fromtimestamp(float(ts), tz=KST)) == day_str(_now_kst_aware())
     except Exception:
         return False
 
 
 def _closed_today(closed: list, limit: int = 500) -> list:
-    """오늘(로컬 자정 이후)에 청산된 거래. exit_time 은 유닉스 초."""
-    start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    """오늘(KST 자정 이후)에 청산된 거래. exit_time 은 유닉스 초.
+    ★ 위와 같은 이유로 호스트 로컬 자정이 아니라 KST 자정 기준이어야 한다."""
+    start = _now_kst_aware().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     out = [c for c in (closed or []) if (c.get("exit_time") or 0) >= start]
     return out[-limit:]
 
@@ -405,8 +413,12 @@ class OverseasState:
         """★ 미국 정규장도 하루 단위 세션이라, 국내주식처럼 날짜가 바뀌면
         오늘의 거래횟수·쿨다운을 리셋한다(코인의 24시간 롤링 방식과는
         다르게, 여기는 '거래일'이라는 개념이 뚜렷해서 이 편이 더 명확하다).
+
+        ★★★ 실제로 겪을 뻔한 버그 - datetime.now()(호스트 로컬 시각)로 날짜를
+        가르면, UTC 호스트에서는 한국 장중(오전 9시)에 날짜가 이미 넘어가 있어
+        일일 손실 한도·거래횟수가 장중에 조용히 리셋된다. KST 기준으로 통일한다.
         """
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = day_str(_now_kst_aware())
         if self.date != today:
             self.date = today
             self.trades = 0
@@ -471,7 +483,10 @@ class OverseasEngine:
 
         self.is_live = (self.overseas_cfg.mode == "live") and bool(cfg.client_id and cfg.client_secret)
         if self.is_live:
-            self.broker = LiveOverseasBroker(self.client, book=self.state.book)
+            # ★★★ [1-5] 국내주식과 같은 이중 주문 방지 설계 - 별도 디렉터리에
+            # 주문 의도를 남긴다(국내주식 orders.jsonl 과 절대 안 섞이게).
+            order_book = OrderBook(os.path.join(cfg.state_dir, "overseas_orders"))
+            self.broker = LiveOverseasBroker(self.client, book=self.state.book, order_book=order_book)
         else:
             # ★★★ 실제로 겪은 버그(국내주식 engine.py 에서 먼저 발견돼 고쳐진 것과 같은 종류) -
             # 재시작할 때마다 모의매매 현금이 그동안의 손익과 무관하게 매번 총 투자금액 그대로
@@ -515,6 +530,10 @@ class OverseasEngine:
         self._auto_watchlist_date: str = ""
         # ★ 잘못된 티커 경고를 매 루프 찍으면 로그가 쓰레기가 된다 - 한 번만.
         self._warned_bad_tickers: set = set()
+        # ★ 종목별 전일 고가·저가 캐시(3-3, volatility_breakout 용).
+        #   {symbol: (날짜문자열, high, low)} - 날짜가 바뀌면 자연히 다시 조회한다
+        #   (_auto_watchlist_date 와 같은 방식 - 별도 롤오버 훅이 필요 없다).
+        self._prev_day_cache: dict = {}
 
         # ★★★ "재빌드·재시작해도 실거래 이력은 API 와 연계해서 실제정보로
         # 업데이트해야 한다"는 요청 - 국내주식 engine.py 의 resume()/
@@ -721,8 +740,11 @@ class OverseasEngine:
         개념이 없으니 랭킹 두 개(거래대금·급등)를 합쳐 상위 N 종목을
         오늘의 감시 목록으로 그대로 쓴다. 하루에 한 번만 다시 뽑는다 -
         장중 시시각각 종목이 바뀌면 판단 기준이 흔들린다.
+
+        ★ 같은 이유(1-10) - KST 기준 날짜로 통일한다(호스트가 UTC 면
+        하루에 한 번이어야 할 재선정이 한국 장중에 또 일어날 수 있었다).
         """
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = day_str(_now_kst_aware())
         if self._auto_watchlist and self._auto_watchlist_date == today:
             return
         count = max(1, getattr(self.overseas_cfg, "auto_select_count", 10))
@@ -773,6 +795,11 @@ class OverseasEngine:
         실제 현재 시각(datetime.now().astimezone())을 쓴다.
         """
         now = now or datetime.now().astimezone()
+        # ★★★ [1-5] 실거래 브로커가 주문 접수 여부를 끝내 확인 못해 멈춘 상태면
+        # (network-uncertain 뒤 resolve_uncertain() 도 실패) 다른 조건과 무관하게
+        # 신규 진입을 막는다 - 모르는 상태로 계속 사고팔지 않는다.
+        if getattr(self.broker, "halted", False):
+            return {"halted": True, "resume_at": None, "reason": self.broker.halt_reason}
         r = self.cfg.risk
         self.state._reset_if_new_day()
         today_closed = [c for c in self.state.closed if isinstance(c, dict) and _is_today_ts(c.get("exit_time"))]
@@ -962,14 +989,43 @@ class OverseasEngine:
             raise RuntimeError(f"{symbol} 시세 응답에 값이 없습니다.")
         return float(price)
 
+    def _prev_day_range(self, symbol: str) -> tuple:
+        """전일(직전 거래일) 실제 고가·저가(3-3). volatility_breakout 기법이
+        '봉을 반으로 나눈 근사' 대신 실제 전일 레인지를 쓸 수 있게 해 준다.
+        ★ _auto_watchlist_date 와 같은 방식 - 날짜문자열을 캐시 키에 넣어
+        날짜가 바뀌면 자연히 다시 조회되게 한다(별도 롤오버 훅이 필요 없다).
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        cached = self._prev_day_cache.get(symbol)
+        if cached is not None and cached[0] == today:
+            return cached[1], cached[2]
+        try:
+            daily = self._fetch_bars(symbol, count=2, interval="1d")
+        except Exception:
+            daily = []
+        if len(daily) >= 2:
+            prev = daily[-2]
+            result = (prev.high, prev.low)
+        elif len(daily) == 1:
+            result = (daily[-1].high, daily[-1].low)  # 상장 첫날 등 - 그거라도 쓴다
+        else:
+            result = (float("nan"), float("nan"))
+        self._prev_day_cache[symbol] = (today, result[0], result[1])
+        return result
+
     def _make_ctx(self, symbol: str, name: str, now) -> SimpleNamespace:
         # ★ 테마 관련 필드는 아예 안 채운다 - getattr(ctx, key, 기본값) 로
         # 안전하게 처리되어(원래 국내주식 코드) 없어도 죽지 않고, 테마
         # 의존 기법만 자연히 통과 못 한다.
-        return SimpleNamespace(
+        ctx = SimpleNamespace(
             symbol=symbol, name=name, theme="해외주식", now=now,
             prev_verdict=None, prev_verdicts=[], held_minutes=0, force_close=False,
         )
+        # ★ 해외주식은 국내주식과 entry_order 를 공유한다(cfg.strategy.entry_order) -
+        # volatility_breakout 이 켜져 있을 때만 일봉을 추가로 조회한다.
+        if "volatility_breakout" in self.cfg.strategy.entry_order:
+            ctx.prev_day_high, ctx.prev_day_low = self._prev_day_range(symbol)
+        return ctx
 
     def _cash_available(self) -> float:
         """★★★ 실제로 겪은 버그("'>' not supported between instances of

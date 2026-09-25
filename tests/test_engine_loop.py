@@ -733,6 +733,197 @@ def test_rescreen_info_tells_next_time() -> None:
           bool(snap.get("rescreen", {}).get("next_at")), str(snap.get("rescreen")))
 
 
+# ━━ OCO 취소 경쟁 상태 (취소하려는 사이 이미 체결됨) ━━━━━━━━━━━━━━━━━━━━━
+
+def test_close_position_survives_oco_just_filled_race() -> None:
+    """★★★ 실제로 겪은 버그 - cancel_oco() 가 실패했는데 oco_is_open() 도
+    False 면 "취소하려는 사이 서버에서 이미 체결됐다"는 뜻이다(다음
+    _poll_server_oco 주기가 돌기 전에 다른 청산 기법이 먼저 _close_position()
+    을 부른 경쟁 상태). 예전엔 이 경우도 그대로 broker.sell() 을 불러 팔
+    수량이 0이라 매도가 실패하고, 매도 실패로 return 해 버려 포지션이
+    영원히 지워지지 않는 유령 포지션이 됐다.
+    """
+    print("\n== OCO 취소 경쟁 상태(취소하려는 사이 이미 체결됨) - 유령 포지션 방지 ==")
+    from types import SimpleNamespace
+
+    from daytrader.broker import Fill, Position
+    from daytrader.clock import SimClock
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.simulator import SimClient
+    from daytrader.timeutil import now_kst
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "sim"
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        clock = SimClock(start="10:00", speed=1, day="2026-09-04")
+        eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
+
+        symbol = "005930"
+        pos = Position(
+            symbol=symbol, name="삼성전자", theme="t", quantity=10, entry_price=70000,
+            entry_time=now_kst(), peak_price=71000, oco_id="oco-1", entry_volume=0,
+            verdict_id=None, why="", technique="breakout",
+        )
+        eng.state.positions[symbol] = pos
+
+        class _OcoJustFilledBroker:
+            """cancel_oco() 는 실패(False)하고 oco_is_open() 도 False(이미
+            없어짐=체결됨)를 돌려주는 상황을 재현한다. 실제 브로커라면 이
+            상태에서 sell() 을 불러도 팔 수량이 0이라 반드시 실패한다."""
+
+            def __init__(self):
+                self.sell_called = False
+
+            def cancel_oco(self, oco_id):
+                return False
+
+            def oco_is_open(self, oco_id):
+                return False
+
+            def sell(self, *a, **kw):
+                self.sell_called = True
+                return Fill(
+                    ok=False, symbol=a[0], side="SELL", quantity=0, price=0.0, order_id=None,
+                    reason="매도 가능 수량이 없습니다.", fatal=False, price_estimated=False,
+                )
+
+        fake_broker = _OcoJustFilledBroker()
+        eng.broker = fake_broker
+
+        verdict = SimpleNamespace(technique="trailing", headline="추적 손절", id=None, narrative="n")
+        eng._close_position(pos, verdict, 71000.0)
+
+        check("★sell() 을 다시 부르지 않음(이미 서버 체결로 처리)", not fake_broker.sell_called)
+        check("★유령 포지션으로 남지 않고 정상적으로 정리됨", symbol not in eng.state.positions)
+        check("거래 기록이 남음", len(eng.state.closed) == 1 and eng.state.closed[0]["symbol"] == symbol)
+        check(
+            "실제 체결가를 못 찾으면 추정으로 표시하고 마지막 시세를 씀",
+            eng.state.closed[0]["estimated"] is True and eng.state.closed[0]["exit"] == 71000.0,
+            str(eng.state.closed[0]),
+        )
+
+
+# ━━ 일일 손실 한도 (평가손실 포함) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_daily_loss_limit_includes_unrealized() -> None:
+    """★★★ 실제로 겪은 버그 - 일일 손실 한도가 실현손익만 보고 판단해서,
+    이미 한도만큼(또는 그 이상) 물려 있는 보유 종목의 평가손실은 무시하고
+    신규 진입을 계속 허용했다. 실현+평가 손익 합계로 판단해야 한다.
+    """
+    print("\n== 일일 손실 한도(평가손실 포함) ==")
+    from daytrader.broker import Position
+    from daytrader.clock import SimClock
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.simulator import SimClient
+    from daytrader.timeutil import now_kst
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "sim"
+    cfg.risk.daily_loss_limit_pct = 0.02  # 배정금액의 2%
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        clock = SimClock(start="10:00", speed=1, day="2026-09-04")
+        engine = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
+
+        # 실현손익은 0이라 예전 코드라면 통과했지만, 보유 종목의 평가손실만으로
+        # 이미 한도(2%)를 넘겼다.
+        loss_amount = engine.allocation * cfg.risk.daily_loss_limit_pct * 1.5
+        entry_price = 100000.0
+        qty = 10
+        peak = entry_price - (loss_amount / qty)
+        engine.state.realized_pnl = 0
+        engine.state.positions["000660"] = Position(
+            symbol="000660", name="SK하이닉스", theme="반도체", quantity=qty,
+            entry_price=entry_price, entry_time=now_kst(), peak_price=peak,
+            oco_id=None, entry_volume=0, verdict_id="v", why="", technique="breakout",
+        )
+
+        check("평가손실만으로 이미 한도를 넘김", -engine._unrealized_pnl() / engine.allocation >= cfg.risk.daily_loss_limit_pct)
+        check("★실현손익은 0이었지만 평가손실 포함해 매매를 멈춤", not engine._check_kill_switch())
+        check("halted 상태가 됨", engine.state.halted)
+
+        # ★ 이익 중인 보유 종목이면(평가이익) 한도에 걸리지 않아야 한다(기존 동작 유지).
+        engine2 = Engine(cfg, SimClient(cfg, clock=SimClock(start="10:00", speed=1, day="2026-09-04"), themes_path=THEMES_PATH))
+        engine2.state.realized_pnl = 0
+        engine2.state.positions["000660"] = Position(
+            symbol="000660", name="SK하이닉스", theme="반도체", quantity=qty,
+            entry_price=entry_price, entry_time=now_kst(), peak_price=entry_price + 1000,
+            oco_id=None, entry_volume=0, verdict_id="v", why="", technique="breakout",
+        )
+        check("평가이익 중이면 한도에 걸리지 않음", engine2._check_kill_switch())
+
+
+# ━━ 동시 보유 한도 (여러 후보가 한 번에 통과할 때) ━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_max_positions_enforced_across_scored_candidates() -> None:
+    """max_positions=3 인데 5종목이 동시에 매수 신호를 내면, 실제로는 3종목만 사야 한다.
+    ★★★ 실제로 겪은 버그 - try_entries() 가 held(보유 수)를 함수 맨 앞에서 딱 한 번만
+    확인하고, 점수 순으로 정렬한 뒤에는 매번 다시 확인하지 않아 한도를 넘겨 샀다.
+    """
+    print("\n== 동시 보유 한도(여러 후보 매수 시 재확인) ==")
+    from types import SimpleNamespace
+
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.playbook import Verdict
+    from daytrader.screener import Candidate
+    from daytrader.simulator import SimClient
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "paper"
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        cfg.capital.max_positions = 3
+        cfg.capital.allocation = 100_000_000  # 자금은 넉넉하게 둔다 - 한도만 시험한다.
+        cfg.risk.daily_max_trades = 50
+
+        client = SimClient(cfg, themes_path=THEMES_PATH)
+        engine = Engine(cfg, client)
+
+        candidates = [
+            Candidate(
+                symbol=f"00000{i}", name=f"종목{i}", theme="t", last_price=10000.0,
+                change_rate=0.05, trading_amount=1e10, theme_score=1.0,
+                theme_rank=1, rank_in_theme=1, theme_breadth=3, theme_intensity=0.05,
+                why="테스트",
+            )
+            for i in range(5)
+        ]
+        engine.candidates = candidates
+
+        # 진입 판단(playbook)과 봉 조회는 이 테스트의 관심사가 아니다 - 후보 5개
+        # 전부가 서로 다른 점수로 "매수" 신호를 내도록 고정해 둔다.
+        engine._entry_bars = lambda symbol, count: ([SimpleNamespace(ts="2026-01-02T09:30:00", open=1000.0, high=1000.0, low=1000.0, close=1000.0, volume=1000.0)], False)
+
+        def fake_evaluate(bars, ctx):
+            idx = int(ctx.symbol[-1])
+            v = Verdict(
+                id=f"v-{ctx.symbol}", at="", symbol=ctx.symbol, name=ctx.name, theme=ctx.theme,
+                phase="main", technique="breakout", technique_label="돌파", ok=True,
+                score=10.0 - idx, terms=[], blocked_by=[], headline="테스트 신호",
+                narrative="", changes=[], inputs={}, price=10000.0,
+            )
+            return v, [v]
+
+        engine.playbook.evaluate_entry = fake_evaluate
+
+        engine.try_entries()
+
+        check(
+            "★동시 보유 한도(3)를 넘지 않음",
+            len(engine.state.positions) <= cfg.capital.max_positions,
+            f"실제 {len(engine.state.positions)}건(한도 {cfg.capital.max_positions})",
+        )
+        check(
+            "한도만큼은 실제로 채워짐(예산·자금이 충분하므로)",
+            len(engine.state.positions) == cfg.capital.max_positions,
+            f"실제 {len(engine.state.positions)}건",
+        )
+
+
 def main() -> None:
     tests = [
         test_full_day, test_consecutive_loss_halt, test_daily_trade_limit,
@@ -740,6 +931,8 @@ def main() -> None:
         test_stop_with_close_positions_actually_liquidates, test_force_close_survives_missing_price,
         test_runner_running_flag_after_stop, test_after_market_no_positions_waits_for_next_open,
         test_pnl_curve_includes_held_positions, test_symbol_curves_sum_to_total, test_rescreen_info_tells_next_time,
+        test_max_positions_enforced_across_scored_candidates, test_daily_loss_limit_includes_unrealized,
+        test_close_position_survives_oco_just_filled_race,
     ]
     for t in tests:
         t()

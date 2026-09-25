@@ -16,6 +16,9 @@
     아니라 이 방식의 한계다.
   - 데이터가 아주 많은 시장(암호화폐는 24시간)은 봉 개수를 상한(MAX_BARS)으로 자른다 - "최근
     1주일"을 정확히 다 못 채울 수 있다.
+  - 진입 체결은 신호가 확정된 봉의 다음 봉 시가 + 슬리피지(risk.max_slippage_pct)로 잡는다(3-4).
+    청산(손절·익절·추적손절)은 여전히 그 봉의 고가·저가가 값에 닿았는지만 보고, 슬리피지를
+    추가로 얹지 않는다 - 진입만큼 과최적화 위험이 크지 않다고 보고 남겨 둔 단순화다.
 """
 
 from __future__ import annotations
@@ -270,6 +273,16 @@ def _pnl_pct(entry: float, exit_price: float, commission_pct: float, tax_pct: fl
     return (proceeds - cost) / cost if cost else 0.0
 
 
+def _slip_price(price: float, side: str, cfg) -> float:
+    """체결가에 슬리피지를 반영한다(PaperBroker._slip() 과 같은 방향 - 매수는 불리하게
+    위로, 매도는 불리하게 아래로). ★ risk.max_slippage_pct 는 시장별 오버라이드
+    (crypto/overseas/swing 용 SimpleNamespace)에는 없는 필드라 - 체결 시 실제로 밀리는
+    정도는 손절폭 같은 시장별 리스크 설정과는 별개의 값이므로 - 항상 cfg.risk(국내
+    설정에 있는 값)를 그대로 쓴다."""
+    pct = cfg.risk.max_slippage_pct
+    return price * (1 + pct) if side == "BUY" else price * (1 - pct)
+
+
 def _window_for(cfg, now_dt, market: str) -> str:
     """국내만 장 초반·막판 시간대 구분이 있다(open_gap/close_squeeze 용) - 그 밖은 항상 main."""
     if market != "domestic":
@@ -329,7 +342,16 @@ def simulate_technique(cfg, market: str, technique_key: str, bars: list, symbol:
             except Exception:
                 continue
             if v and v.ok:
-                position = {"entry_price": bar.close, "entry_ts": bar.ts, "peak": bar.close}
+                # ★★★ 3-4 - 원래는 신호가 난 바로 그 봉(i)의 종가로, 슬리피지도 없이
+                # 그 자리에서 체결됐다고 봤다. 실제로는 봉 i 가 닫혀야 신호를 확인할 수
+                # 있고, 주문은 그 다음이라 체결은 빨라야 봉 i+1 의 시가에서나 일어난다.
+                # 다음 봉이 없으면(i 가 마지막 봉) 체결을 검증할 데이터가 없으니 신호를
+                # 버린다(실거래에서도 장 마감 뒤 신호는 그날 체결되지 않는다).
+                if i + 1 < len(bars):
+                    fill_bar = bars[i + 1]
+                    fill_open = fill_bar.open if fill_bar.open == fill_bar.open else fill_bar.close
+                    fill_price = _slip_price(fill_open, "BUY", cfg)
+                    position = {"entry_price": fill_price, "entry_ts": fill_bar.ts, "peak": fill_price}
             continue
 
         hi = bar.high if bar.high == bar.high else bar.close
@@ -463,22 +485,47 @@ def run(cfg, client, market: str, days: int = 7, symbol_limit: int = 10, save: b
 
         results = [simulate_technique(cfg, market, key, bars, symbol, name, theme, risk=market_risk) for key in techniques]
         results.sort(key=lambda r: r["total_pnl_pct"], reverse=True)
+        # ★★★ 3-4 - 원래는 거래가 1건만 있어도(운으로 한 번 이겼을 뿐이어도) 가장 높은
+        # total_pnl_pct 를 낸 기법을 그대로 "이 종목의 최고 기법"으로 저장해
+        # technique_prefs.json → PREFERENCE_BOOST(1.15배)로 실전 진입 점수에 반영했다.
+        # 표본 1건으로 실전 가산점을 주는 건 과최적화다 - 실적 기반 가산점의 다른
+        # 경로(_performance_multiplier)가 이미 쓰는 min_trades_for_weight(기본 20건)
+        # 문턱을 여기서도 그대로 재사용해, 문턱 미만이면 best_technique 를 아예 None 으로
+        # 남긴다(technique_prefs.save_from_backtest 가 None 인 건 저장하지 않는다).
+        min_trades = getattr(cfg.strategy, "min_trades_for_weight", 20)
+        best = results[0] if results and results[0]["trades"] >= min_trades else None
         by_symbol.append({
             "symbol": symbol, "name": name, "theme": theme, "bars": len(bars),
-            "best_technique": results[0]["technique"] if results and results[0]["trades"] else None,
+            "best_technique": best["technique"] if best else None,
             "results": results,
         })
         for r in results:
             if r["trades"]:
-                theme_scores.setdefault(theme, {}).setdefault(r["technique"], []).append(r["total_pnl_pct"])
+                theme_scores.setdefault(theme, {}).setdefault(r["technique"], []).append(
+                    (r["total_pnl_pct"], r["trades"])
+                )
 
     by_theme = []
+    min_trades = getattr(cfg.strategy, "min_trades_for_weight", 20)
     for theme, per_tech in theme_scores.items():
         rows = sorted(
-            ({"technique": k, "avg_pnl_pct": sum(v) / len(v), "symbols": len(v)} for k, v in per_tech.items()),
+            (
+                {
+                    "technique": k,
+                    "avg_pnl_pct": sum(pnl for pnl, _ in v) / len(v),
+                    "symbols": len(v),
+                    "trades": sum(t for _, t in v),  # ★ 이 테마에서 이 기법이 낸 거래 수 합계(3-4 문턱 판정용).
+                }
+                for k, v in per_tech.items()
+            ),
             key=lambda r: r["avg_pnl_pct"], reverse=True,
         )
-        by_theme.append({"theme": theme, "best_technique": rows[0]["technique"] if rows else None, "results": rows})
+        # ★ by_symbol 과 같은 이유로, 이 테마에서 이 기법이 실제로 만든 거래 수 합계가
+        # min_trades_for_weight 미만이면 테마 단위 선호 기법도 저장하지 않는다.
+        best_theme = rows[0] if rows and rows[0]["trades"] >= min_trades else None
+        by_theme.append({
+            "theme": theme, "best_technique": best_theme["technique"] if best_theme else None, "results": rows,
+        })
 
     out = {
         "market": market, "days": days, "at": _now_iso(),

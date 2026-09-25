@@ -17,6 +17,15 @@ from daytrader.timeutil import iso, now_kst
 PENDING_STATES = ("intent", "sent", "unknown")
 
 
+class OrderUncertainError(RuntimeError):
+    """★★★ 주문을 보냈지만 접수 여부를 끝내 확인하지 못했을 때 던진다(해외주식·
+    암호화폐 브로커도 이 모듈과 같은 설계를 따른다 - resolve_uncertain() 이
+    None 을 돌려준 경우). 재전송하면 이중 주문, 그냥 넘어가면 포지션 기록
+    누락(다음 스캔에서 또 산다)이 되니 둘 다 위험하다 - 호출한 브로커는
+    이 예외를 받으면 그 시장 전체를 멈추고 사람에게 알려야 한다.
+    """
+
+
 @dataclass
 class OrderIntent:
     coid: str

@@ -224,7 +224,19 @@ class LiveBroker(BaseBroker):
 
     def cash(self) -> float:
         bp = self.client.buying_power()
-        return float(bp.get("cash") or bp.get("buyingPower") or 0)
+        # ★★★ 실제로 겪은 버그 - `or` 는 0 도 "없음"으로 취급한다. 계좌 현금이
+        # 정확히 0원이면(다 써서 매수 여력이 없는 정상 상태) cash 키가 0 을
+        # 정확히 돌려줘도 or 연쇄가 buyingPower 로, 그마저 0 이면 마지막 0 으로
+        # 넘어가 버려 우연히 값은 맞아도 의도가 잘못됐다 - buyingPower 가
+        # cash 와 다른(더 큰) 값을 담고 있으면 0원인 계좌를 매수 가능한
+        # 것으로 잘못 본다. None 과 0 을 구분해서 "필드가 없을 때만" 다음
+        # 필드로 넘어간다.
+        cash = bp.get("cash")
+        if cash is None:
+            cash = bp.get("buyingPower")
+        if cash is None:
+            cash = 0
+        return float(cash)
 
     def _wait_fill(self, order_id, timeout: float):
         """1.5초 폴링. 필드명이 문서와 다를 수 있어 방어적으로 여러 이름을 시도한다."""

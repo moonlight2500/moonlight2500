@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 CACHE_TTL = 60 * 60  # 같은 종목·같은 헤드라인은 60분 동안 다시 묻지 않는다.
 LEVELS = ("block", "caution", "none")
+CALLS_FILE = "news_guard_ai_calls.json"  # ai_max_calls_per_day 카운터를 재시작 후에도 유지한다.
 
 _SYSTEM = """You are a risk screener for a short-term stock/crypto trading program. You are given a symbol and its most recent news headlines. Decide whether buying it right now is unsafe because of a serious negative event.
 Rules:
@@ -92,9 +94,53 @@ class NewsGuard:
         self._complete = complete_fn or (lambda system, user, max_tokens: llm.complete(self.cfg, system, user, max_tokens))
         self._lock = threading.Lock()
         self._cache: dict = {}  # (market, symbol) -> Verdict
-        self._calls: list = []  # 최근 24시간 AI 호출 시각
+        # ★★★ "ai_max_calls_per_day 하루 한도가 서버 재시작으로 초기화된다" 문제 - 예전에는
+        # 이 목록이 메모리에만 있어서, 서버를 여러 번 재시작하면(예: 배포·오류 복구) 같은
+        # 날 하루 한도를 몇 번이고 다시 채울 수 있었다(무료 플랜 한도 초과로 이어짐). 이제
+        # state_dir 파일에 남겨 시작할 때 불러온다 - 24시간이 지난 항목은 자연히 걸러진다.
+        self._calls: list = self._load_calls()  # 최근 24시간 AI 호출 시각
         self.last_error = ""
         self.total_calls = 0
+
+    def _calls_path(self) -> str | None:
+        try:
+            return os.path.join(self.cfg.state_dir, CALLS_FILE)
+        except Exception:
+            return None
+
+    def _load_calls(self) -> list:
+        path = self._calls_path()
+        if not path or not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        cutoff = time.time() - 86400
+        out = []
+        for t in data:
+            try:
+                t = float(t)
+            except (TypeError, ValueError):
+                continue
+            if t >= cutoff:
+                out.append(t)
+        return out
+
+    def _save_calls(self) -> None:
+        """실패해도 판정 자체는 막지 않는다(디스크 오류가 매매를 멈추면 안 된다)."""
+        path = self._calls_path()
+        if not path:
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._calls, f)
+        except Exception:
+            pass
 
     # ── 설정 ──
     @property
@@ -159,6 +205,7 @@ class NewsGuard:
         with self._lock:
             self._calls.append(time.time())
             self.total_calls += 1
+            self._save_calls()
         try:
             text = self._complete(_SYSTEM, user, 150)
         except Exception as exc:  # 어떤 오류도 통과시킨다

@@ -53,6 +53,23 @@ def section_ticks() -> None:
     # ★ 4998 을 5원 단위로 올리면 5000 인데 5000 의 단위는 10원이라 다시 맞춰야 한다.
     check("4998 up -> 5000 (경계 재조정)", round_to_tick(4998, "up") == 5000)
 
+    # ★★★ 실제로 겪은 버그 - int(p) 로 소수점을 먼저 버린 뒤 올림 공식을 적용해서
+    # round_to_tick(13540.5, "up") 이 13550 이 아니라 13540 을 돌려줬다(이미
+    # 호가단위에 맞는 값처럼 취급됨). 소수점이 있는 값의 "up" 을 각 호가단위
+    # 구간 경계(2,000/5,000/20,000/50,000/200,000/500,000원)에서 확인한다.
+    check("★13540.5 up -> 13550 (소수점 버림 없이 올림)", round_to_tick(13540.5, "up") == 13550)
+    check("13540(이미 호가단위) up -> 13540 그대로", round_to_tick(13540, "up") == 13540)
+    check("1999.4 up -> 2000 (2,000원 경계)", round_to_tick(1999.4, "up") == 2000)
+    check("4999.5 up -> 5000 (5,000원 경계)", round_to_tick(4999.5, "up") == 5000)
+    check("19999.5 up -> 20000 (20,000원 경계)", round_to_tick(19999.5, "up") == 20000)
+    check("49999.5 up -> 50000 (50,000원 경계)", round_to_tick(49999.5, "up") == 50000)
+    check("199999.5 up -> 200000 (200,000원 경계)", round_to_tick(199999.5, "up") == 200000)
+    check("499999.5 up -> 500000 (500,000원 경계)", round_to_tick(499999.5, "up") == 500000)
+    check("2000.5 up -> 2005 (소수점 있는 일반값)", round_to_tick(2000.5, "up") == 2005)
+    # ★ down/nearest 모드는 원래도 정확했지만, up 을 고치며 깨지지 않았는지 소수점 입력으로 확인한다.
+    check("1999.9 down -> 1999 (소수점, down 은 그대로 정확)", round_to_tick(1999.9, "down") == 1999)
+    check("10003.7 nearest -> 10000 (소수점, nearest 도 그대로 정확)", round_to_tick(10003.7, "nearest") == 10000)
+
     rt = round_trip_cost_pct(0.00015, 0.0015)
     check("왕복비용 0.180%", abs(rt - 0.0018) < 1e-9, f"실제 {rt}")
 
@@ -123,6 +140,26 @@ def section_config_validate() -> None:
 
     check("주간<일일 거부", not try_load(_mutate_weekly))
     check("★알 수 없는 키 거부", not try_load(lambda r: r["risk"].__setitem__("없는키", 1)))
+
+    # ★★★ 실제로 겪을 뻔한 사고 - force_close_time + force_close_deadline_min 유예가
+    # 15:20 단일가(종가) 매매 시작을 넘기면 강제청산 주문이 정상적으로 접속성
+    # 매매 시간에 들어가지 못한다. 15:19까지 끝나야 한다.
+    check(
+        "★강제청산 유예가 15:20 단일가 시작을 넘기면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("force_close_deadline_min", 15)),  # 15:10+15분=15:25
+    )
+
+    def _mutate_boundary_ok(r):
+        r["exit"]["force_close_time"] = "15:10"
+        r["exit"]["force_close_deadline_min"] = 9  # 정확히 15:19에 끝남 - 경계값은 통과해야 한다.
+
+    check("15:19에 정확히 끝나면 통과(경계값)", try_load(_mutate_boundary_ok))
+
+    def _mutate_boundary_fail(r):
+        r["exit"]["force_close_time"] = "15:11"
+        r["exit"]["force_close_deadline_min"] = 9  # 15:20에 끝남 - 단일가 시작 시각과 겹쳐 거부되어야 한다.
+
+    check("15:20에 끝나면 거부(단일가 시작과 겹침)", not try_load(_mutate_boundary_fail))
 
 
 # ━━ 지표 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1461,8 +1498,18 @@ def section_notify_test_uses_saved_values() -> None:
     import asyncio
     import shutil
     import tempfile as _tempfile
+    import time as _t
     from unittest.mock import patch
+    from starlette.requests import Request
     import daytrader.server as server
+
+    def make_req(headers=None) -> Request:
+        hdrs = {k.lower().encode(): str(v).encode() for k, v in (headers or {}).items()}
+        scope = {
+            "type": "http", "method": "POST", "scheme": "http", "path": "/", "query_string": b"",
+            "headers": list(hdrs.items()), "client": ("127.0.0.1", 50000),
+        }
+        return Request(scope)
 
     tmp = _tempfile.mkdtemp()
     orig = server.CONFIG_PATH
@@ -1480,15 +1527,23 @@ def section_notify_test_uses_saved_values() -> None:
             sent = []
             with patch("daytrader.notify._post_raw_sync",
                        side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
-                # ★ 저장 직후 상황 - 입력칸이 비어 있다.
-                result = await server.notify_test(server.NotifyTestIn(token="", chat_id=""))
+                # ★ 저장 직후 상황 - 입력칸이 비어 있다(저장된 값을 쓰므로 [2-4] 재확인도 필요 없다).
+                result = await server.notify_test(server.NotifyTestIn(token="", chat_id=""), make_req())
             check("★★★ 입력칸이 비어도 테스트가 성공함", result.get("ok") is True)
             check("저장된 토큰·채팅ID 를 사용함", sent and sent[0] == ("saved_tok", "999"), str(sent))
 
+            # ★ [2-4] 입력칸에 새 값을 직접 넣어 시험하려면 설정 재확인 토큰이 있어야 한다.
+            server._confirm_tokens["tok-offline-notify-test"] = ("settings", _t.time() + 60)
             sent.clear()
-            with patch("daytrader.notify._post_raw_sync",
-                       side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
-                await server.notify_test(server.NotifyTestIn(token="new_tok", chat_id="111"))
+            try:
+                with patch("daytrader.notify._post_raw_sync",
+                           side_effect=lambda t, c, x: (sent.append((t, c)), (True, ""))[1]):
+                    await server.notify_test(
+                        server.NotifyTestIn(token="new_tok", chat_id="111"),
+                        make_req({"x-confirm-token": "tok-offline-notify-test"}),
+                    )
+            finally:
+                server._confirm_tokens.pop("tok-offline-notify-test", None)
             check("입력칸에 값이 있으면 그것을 우선(저장 전 시험용)",
                   sent and sent[0] == ("new_tok", "111"), str(sent))
 

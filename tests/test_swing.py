@@ -382,6 +382,35 @@ def test_swing_broker_crypto_fractional_quantity() -> None:
     check("암호화폐 부분 매도 후에도 남은 수량이 소수점", book.get("KRW-BTC").quantity > 0)
 
 
+def test_swing_broker_overseas_converts_krw_to_usd() -> None:
+    """★★★ [1-11] 실제로 겪은 버그 - PaperSwingBroker 가 원화 예산을 해외주식
+    달러 주가로 그대로 나눠서 수량이 환율 배수(약 1,400배)만큼 부풀려졌다
+    (200만원 ÷ $150 = 13333주). overseas_engine._usd_krw_rate() 로 환산한
+    뒤 나눠야 현실적인 수량(약 9주)이 나온다.
+    """
+    print("\n== ★★★ [1-11] PaperSwingBroker 해외주식 매수가 환율을 반영함 ==")
+    import daytrader.overseas_engine as oe
+    import daytrader.swing_broker as sb
+
+    orig_rate = oe._usd_krw_rate
+    oe._usd_krw_rate = lambda: 1400.0
+    try:
+        book = SwingPositionBook()
+        broker = sb.PaperSwingBroker(starting_cash=10_000_000, book=book)
+        pos = broker.buy("AAPL", "AAPL", 2_000_000, 150.0, technique="swing_ma_pullback", market="overseas")
+        check("환율 버그였다면 13,000주 이상 - 실제로는 약 9주",
+              pos is not None and pos.quantity == 9, pos and pos.quantity)
+        check("원화 기준으로 현금이 정상적으로 줄어듦(투입금이 예산을 넘지 않음)",
+              pos is not None and pos.invested <= 2_000_000, pos and pos.invested)
+        check("entry_price 는 환산 없이 달러 그대로 기록됨", pos.entry_price == 150.0)
+
+        result = broker.sell("AAPL", 160.0)
+        check("매도도 같은 환율로 원화 환산 - 이익이 남(가격이 올랐으므로)", result["pnl"] > 0, result)
+        check("전량 매도 후 장부에서 사라짐", not book.owns("AAPL"))
+    finally:
+        oe._usd_krw_rate = orig_rate
+
+
 def test_swing_engine_multi_market_selection() -> None:
     print("== SwingEngine._select_candidates - 국내·해외·암호화폐 세 시장을 함께 고르고 번갈아 담음 ==")
     cfg = load_config(CONFIG_PATH)
@@ -528,6 +557,41 @@ def test_swing_engine_halt_info() -> None:
         check("쿨다운(3시간)이 지나면 재개", not info2["halted"], info2)
 
 
+def test_swing_fmt_ts_uses_kst_not_host_tz() -> None:
+    """★★★ [1-10] swing_engine._fmt_ts 가 datetime.now()(호스트 로컬 시각)로
+    "오늘"을 가르면, UTC 호스트에서는 한국 시각 오전 9시 이전에도 이미 다음
+    날로 넘어간 것으로 착각한다. TZ=UTC 로 호스트를 재현하고 "지금"을 KST
+    새벽 2시로 고정해(UTC 로는 아직 전날 17시) 경계를 검증한다.
+    """
+    print("\n== ★★★ [1-10] swing_engine._fmt_ts 가 KST 자정 기준(UTC 호스트) ==")
+    import time as _time
+
+    import daytrader.swing_engine as se
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+    orig_now_kst = se.now_kst
+    try:
+        fixed_now = se.datetime(2026, 1, 5, 2, 0, tzinfo=se.KST)
+        se.now_kst = lambda: fixed_now
+
+        yesterday_kst_2350 = se.datetime(2026, 1, 4, 23, 50, tzinfo=se.KST).timestamp()
+        today_kst_0010 = se.datetime(2026, 1, 5, 0, 10, tzinfo=se.KST).timestamp()
+
+        check("KST 자정 전(어제 23:50) 은 '오늘' 형식(HH:MM)로 안 찍힘",
+              "/" in se._fmt_ts(yesterday_kst_2350), se._fmt_ts(yesterday_kst_2350))
+        check("KST 자정 이후(오늘 00:10) 는 '오늘' 형식(HH:MM)으로 찍힘",
+              se._fmt_ts(today_kst_0010) == "00:10", se._fmt_ts(today_kst_0010))
+    finally:
+        se.now_kst = orig_now_kst
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+
+
 def test_swing_engine_never_force_closes() -> None:
     print("== SwingEngine 컨텍스트는 절대 force_close=True 를 안 만듦(당일 청산 개념 없음) ==")
     cfg = load_config(CONFIG_PATH)
@@ -551,9 +615,10 @@ def main() -> None:
         test_get_candidates_swing_merges_watchlist, test_get_candidates_swing_skips_crypto_without_keys,
         test_get_candidates_swing_round_robin, test_simulate_technique_uses_swing_risk_override,
         test_swing_broker_paper, test_swing_broker_crypto_fractional_quantity,
+        test_swing_broker_overseas_converts_krw_to_usd,
         test_swing_engine_multi_market_selection, test_passes_swing_filters_week_momentum,
         test_swing_state_roundtrip, test_swing_engine_cash_persists_across_restart, test_swing_engine_halt_info,
-        test_swing_engine_never_force_closes,
+        test_swing_engine_never_force_closes, test_swing_fmt_ts_uses_kst_not_host_tz,
     ):
         t()
     print(f"총 {_total}건 중 실패 {len(_failures)}건")

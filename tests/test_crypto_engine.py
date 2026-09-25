@@ -569,6 +569,49 @@ def test_low_volume_market_not_bought() -> None:
     check("필터를 꺼두면(0) 거래대금이 얇아도 매수함", engine2.state.book.owns("KRW-BTC"))
 
 
+def test_fmt_ts_and_closed_today_use_kst_not_host_tz() -> None:
+    """★★★ [1-10] _fmt_ts/_closed_today 가 datetime.now()(호스트 로컬 시각)로
+    "오늘"을 가르면, UTC 호스트에서는 한국 시각 오전 9시 이전에도 이미 다음
+    날로 넘어간 것으로 착각한다. TZ=UTC 로 호스트를 재현하고 "지금"을 KST
+    새벽 2시로 고정해(UTC 로는 아직 전날 17시) 경계를 검증한다.
+    """
+    print("\n== ★★★ [1-10] _fmt_ts/_closed_today 가 KST 자정 기준(UTC 호스트) ==")
+    import time as _time
+
+    import daytrader.crypto_engine as ce
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+    orig_now_kst_aware = ce._now_kst_aware
+    try:
+        fixed_now = ce.datetime(2026, 1, 5, 2, 0, tzinfo=ce.KST)
+        ce._now_kst_aware = lambda: fixed_now
+
+        yesterday_kst_2350 = ce.datetime(2026, 1, 4, 23, 50, tzinfo=ce.KST).timestamp()
+        today_kst_0010 = ce.datetime(2026, 1, 5, 0, 10, tzinfo=ce.KST).timestamp()
+
+        check("KST 자정 전(어제 23:50) 은 '오늘' 형식(HH:MM)로 안 찍힘",
+              "/" in ce._fmt_ts(yesterday_kst_2350), ce._fmt_ts(yesterday_kst_2350))
+        check("KST 자정 이후(오늘 00:10) 는 '오늘' 형식(HH:MM)으로 찍힘",
+              ce._fmt_ts(today_kst_0010) == "00:10", ce._fmt_ts(today_kst_0010))
+
+        closed = [
+            {"exit_time": yesterday_kst_2350, "pnl": -100},
+            {"exit_time": today_kst_0010, "pnl": -200},
+        ]
+        today_only = ce._closed_today(closed)
+        check("_closed_today 도 KST 자정 기준으로 정확히 오늘 것만 포함",
+              len(today_only) == 1 and today_only[0]["pnl"] == -200, today_only)
+    finally:
+        ce._now_kst_aware = orig_now_kst_aware
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
+
+
 def main() -> None:
     tests = [
         test_buy_then_take_profit, test_low_volume_market_not_bought, test_stop_loss, test_state_persistence,
@@ -579,6 +622,7 @@ def main() -> None:
         test_crypto_evaluates_all_enabled_techniques, test_closed_trade_records_entry_technique,
         test_loss_halt_cooldown_and_resume_time,
         test_reentry_cooldown_after_loss, test_top_volume_watchlist_expansion,
+        test_fmt_ts_and_closed_today_use_kst_not_host_tz,
     ]
     for t in tests:
         t()

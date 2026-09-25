@@ -4,6 +4,7 @@
     RealtimeChart, DataGrid, sparkline, animateNumber, conditionBar, evidencePanel, GFMT, fmtTermVal,
     CandleChart, tradeChart,
     CONFIG_SCHEMA, fieldTier, buildField, collectConfig, getPath, setPath, techBadge, techBadgeHTML, loadTechniques,
+    icon,
   } = window.UI;
 
   // ━━ 유틸 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -233,6 +234,21 @@
     return el("div", { class: "skel", style: { height: (height || 80) + "px" } });
   }
 
+  // ★★★ "탭을 바꾸면 1~2초 화면이 비어 있다" - 대부분의 패널은 onShow() 가
+  // API 를 기다리는 동안 스스로는 아무것도 안 그린다(각 렌더 함수가 데이터를
+  // 받은 뒤에야 panel.innerHTML 을 채우기 때문). 패널마다 로딩 표시를 따로
+  // 넣는 대신, 여기 한 곳에서 - 패널이 비어 있을 때(처음 여는 화면)만 - 공용
+  // 스켈레톤을 먼저 넣어 둔다. 실제 렌더 함수가 끝나면 다들 panel.innerHTML
+  // 을 비우고 다시 그리므로 이 플레이스홀더는 자연히 사라진다.
+  function _tabLoadingPlaceholder() {
+    const wrap = el("div", {});
+    wrap.appendChild(skeleton(28));
+    wrap.appendChild(el("div", { style: { height: "var(--s2)" } }));
+    wrap.appendChild(skeleton(140));
+    wrap.appendChild(el("div", { class: "empty", text: "불러오는 중…" }));
+    return wrap;
+  }
+
   // ━━ 자동 갱신 스크롤 보존 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // ★★★ "자동 갱신되면 화면이 맨 위로 튄다" - 종목선정/시세목록/실험실처럼
   // 긴 목록이 있는 패널은 주기적으로 통째로(또는 큰 덩어리로) 지우고 다시
@@ -261,25 +277,26 @@
   // 그때 화면 전체를 고쳐야 한다.
 
   // ★★★ "아이콘도 세련되고 깔끔한 걸로, 심플한 걸로" - 플랫폼마다 다르게 그려지고
-  // 색이 고정된 이모지 대신, currentColor 를 쓰는 얇은 선 아이콘(SVG)으로 바꿨다.
-  // 버튼이 활성/비활성일 때 글자색을 따라 자동으로 같이 바뀌어서 이모지보다 오히려
-  // 상태 표현이 자연스럽다. 하위 탭(sub-nav)의 이모지 접두어도 빼서 텍스트만 남긴다 -
-  // 탭이 많아 한 줄에 여러 개 늘어설 때 이모지가 섞이면 오히려 산만해 보였다.
-  const NAV_ICONS = {
-    trading: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 6"/><polyline points="14 6 21 6 21 13"/></svg>',
-    records: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v3H9z"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
-    improve: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.6" fill="currentColor" stroke="none"/></svg>',
-    settings: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  // 색이 고정된 이모지 대신, ui.js 의 UI.icon() 이 만드는 currentColor 얇은 선
+  // 아이콘(SVG)을 쓴다. 그룹(4개) 은 하단 탭바·사이드바 섹션 아이콘으로,
+  // 각 화면(16개) 은 사이드바 항목 아이콘으로 쓴다.
+  const GROUP_ICON = { Trading: "trading", Records: "records", Improve: "improve", Settings: "settings" };
+  const GROUP_LABEL_KO = { Trading: "매매", Records: "기록", Improve: "개선", Settings: "설정" };
+  const TAB_ICON = {
+    dash: "dashboard", selection: "target", news: "newspaper", market: "globe",
+    perf: "chart", journal: "book", marketreview: "message",
+    about: "info", review: "calendar", lab: "flask", playbook: "layers", rules: "shield", release: "tag",
+    setup: "plug", themes: "hash", config: "sliders",
   };
 
   const NAV = [
-    { group: "Trading", icon: NAV_ICONS.trading, hint: "지금 무슨 일이 일어나고 있는지",
+    { group: "Trading", hint: "지금 무슨 일이 일어나고 있는지",
       tabs: [["dash", "대시보드"], ["selection", "종목 선정"], ["news", "속보"], ["market", "시장"]] },
-    { group: "Records", icon: NAV_ICONS.records, hint: "무엇을 샀고 왜 그랬는지",
+    { group: "Records", hint: "무엇을 샀고 왜 그랬는지",
       tabs: [["perf", "성과"], ["journal", "매매일지"], ["marketreview", "시장 평가"]] },
-    { group: "Improve", icon: NAV_ICONS.improve, hint: "규칙을 이해하고 다듬기",
+    { group: "Improve", hint: "규칙을 이해하고 다듬기",
       tabs: [["about", "소개"], ["review", "월간 리뷰"], ["lab", "실험실"], ["playbook", "매매 기법"], ["rules", "매매원칙"], ["release", "릴리즈 노트"]] },
-    { group: "Settings", icon: NAV_ICONS.settings, hint: "연결과 파라미터",
+    { group: "Settings", hint: "연결과 파라미터",
       tabs: [["setup", "준비·연결"], ["themes", "테마"], ["config", "설정"]] },
   ];
 
@@ -359,16 +376,31 @@
     // ★ 탭이 속한 그룹을 찾아 그룹탭도 함께 활성화한다 - 즐겨찾기·URL
     // 해시로 바로 하위 탭에 진입해도 상위 그룹이 어긋나지 않는다.
     const owningGroup = NAV.find((g) => g.tabs.some(([tid]) => tid === id));
-    if (owningGroup && owningGroup.group !== _activeGroup) {
-      _activeGroup = owningGroup.group;
-      renderGroupNav();
-      renderSubNav();
+    if (owningGroup) {
+      // ★★★ "그룹을 다시 탭하면 그 그룹에서 마지막으로 보던 화면으로" -
+      // 하단 탭바(모바일)가 이 값을 읽어 첫 탭이 아니라 마지막 위치로
+      // 돌아간다. 새로고침 사이엔 안 남아도 된다(세션 안에서만 기억).
+      _lastTabInGroup[owningGroup.group] = id;
+      if (owningGroup.group !== _activeGroup) {
+        _activeGroup = owningGroup.group;
+        renderGroupNav();
+        renderSubNav();
+      }
     }
 
     $$(".sub-nav a[data-tab]").forEach((a) => a.classList.toggle("active", a.dataset.tab === id));
+    _updateSidebarActive();
     $$("main .panel").forEach((p) => {
       p.style.display = p.dataset.panel === id ? "flex" : "none";
     });
+
+    // ★ 상단바 제목 - 사이드바를 접어도(레일 모드) 지금 어느 화면인지는
+    // 항상 여기서 보인다.
+    const title = $("#topbar-title");
+    if (title && owningGroup) {
+      const tabDef = owningGroup.tabs.find(([tid]) => tid === id);
+      title.textContent = tabDef ? tabDef[1] : id;
+    }
 
     // ★ 탭이 바뀌면 해외주식 통화 토글(#currency-toggle)도 새 탭 기준으로 다시 보이거나
     // 숨는다 - _currencyToggleRelevant() 참고. initCurrencyToggle() 이 아직 버튼을 만들기
@@ -389,6 +421,14 @@
         && (Date.now() - handlers._loadedAt) < handlers.cacheMs && !opts.force;
       if (!fresh) {
         handlers._loadedAt = Date.now();
+        // ★ 패널이 비어 있으면(이번 세션에서 처음 여는 화면) onShow() 가
+        // 데이터를 받아 그리기 전까지 화면이 텅 비어 보인다 - 그 사이를
+        // 공용 스켈레톤으로 채운다. onShow() 의 실제 렌더가 곧 이 패널을
+        // 비우고 다시 그리므로 따로 지워줄 필요는 없다.
+        const panelEl = $('.panel[data-panel="' + id + '"]');
+        if (panelEl && !panelEl.hasChildNodes()) {
+          panelEl.appendChild(_tabLoadingPlaceholder());
+        }
         const r = handlers.onShow();
         if (r && typeof r.catch === "function") r.catch(() => { handlers._loadedAt = 0; });
       }
@@ -396,44 +436,122 @@
   }
 
   let _activeGroup = null;
+  const _lastTabInGroup = {}; // group -> 그 그룹에서 마지막으로 본 tab id (세션 중에만 기억)
 
   function buildNav() {
+    renderSidebarNav();
     renderGroupNav();
+    initSidebarCollapse();
   }
 
+  // ━━ 사이드바(데스크톱·태블릿) - 16개 화면을 그룹별 섹션으로 전부 펼쳐
+  // 둔다. "많은 스크롤로 보기 불편한 네비게이션 지양" 요청대로, 어느
+  // 화면이든 여기서 한 번만 누르면 간다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  function renderSidebarNav() {
+    const nav = $("#sidebar-nav");
+    if (!nav) return;
+    nav.innerHTML = "";
+
+    const logo = $(".sidebar-brand-logo");
+    if (logo && !logo.innerHTML) logo.innerHTML = icon("trending-up", 16);
+
+    NAV.forEach((g) => {
+      const section = el("div", { class: "sidebar-group" });
+      section.appendChild(el("div", { class: "sidebar-group-label", text: GROUP_LABEL_KO[g.group] || g.group }));
+      g.tabs.forEach(([id, label]) => {
+        const btn = el("button", {
+          type: "button", class: "sidebar-item", "data-tab": id,
+          title: label, "aria-label": label, "aria-current": "false",
+        });
+        btn.appendChild(el("span", { class: "sidebar-item-icon", html: icon(TAB_ICON[id] || "hash", 18) }));
+        btn.appendChild(el("span", { class: "sidebar-item-label", text: label }));
+        btn.addEventListener("click", () => showTab(id));
+        section.appendChild(btn);
+      });
+      nav.appendChild(section);
+    });
+    _updateSidebarActive();
+  }
+
+  function _updateSidebarActive() {
+    $$(".sidebar-item[data-tab]").forEach((b) => {
+      const active = b.dataset.tab === _activeTab;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-current", active ? "page" : "false");
+    });
+  }
+
+  // 데스크톱(≥1024px) 은 기본으로 펼치고, 태블릿(768~1023px) 은 기본으로
+  // 아이콘 레일이다 - 사용자가 접기 버튼을 누르면 그 뒤로는 폭과 무관하게
+  // localStorage 값을 따른다.
+  const SIDEBAR_COLLAPSE_KEY = "ui.sidebarCollapsed";
+
+  function _loadSidebarCollapsed() {
+    try {
+      const saved = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+      if (saved === "1") return true;
+      if (saved === "0") return false;
+    } catch (e) { /* 사생활 보호 모드 등 - 무시 */ }
+    return !window.matchMedia("(min-width: 1024px)").matches;
+  }
+
+  function _applySidebarCollapsed(collapsed) {
+    const shell = $(".app-shell");
+    if (shell) shell.classList.toggle("sidebar-collapsed", collapsed);
+    const btn = $("#sidebar-collapse");
+    if (btn) btn.setAttribute("aria-expanded", String(!collapsed));
+  }
+
+  function initSidebarCollapse() {
+    _applySidebarCollapsed(_loadSidebarCollapsed());
+    const btn = $("#sidebar-collapse");
+    if (!btn) return;
+    if (!btn.innerHTML) btn.innerHTML = icon("chevron-left", 16);
+    if (btn.dataset.bound) return; // buildNav() 는 로그인마다 한 번씩만 불리지만, 혹시 몰라 중복 바인딩을 막는다.
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const shell = $(".app-shell");
+      const next = !(shell && shell.classList.contains("sidebar-collapsed"));
+      _applySidebarCollapsed(next);
+      try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, next ? "1" : "0"); } catch (e) { /* 무시 */ }
+    });
+  }
+
+  // ━━ 하단 탭바(모바일) - 그룹 4개만. 탭하면 그 그룹에서 마지막으로 보던
+  // 화면으로 돌아간다(처음이면 그룹의 첫 화면). ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   function renderGroupNav() {
-    const groupNav = $(".group-nav");
+    const groupNav = $("#group-nav");
     if (!groupNav) return;
     groupNav.innerHTML = "";
 
     NAV.forEach((g) => {
       const btn = el("button", {
-        type: "button", class: "group-tab", title: g.hint,
+        type: "button", class: "group-tab", title: g.hint, "aria-label": g.hint,
       });
-      // ★ 알약형 가로 버튼(코드·라벨을 한 줄로)에서, 아이콘이 위·라벨이
-      // 아래인 타일 구조로 바꿨다 - 앱 런처/모바일 탭바에 가까운 인상을
-      // 주기 위한 재디자인 요청에 따른 것이다.
-      btn.appendChild(el("span", { class: "group-tab-icon", html: g.icon || "" }));
-      btn.appendChild(el("span", { class: "group-tab-label", text: g.group }));
+      btn.appendChild(el("span", { class: "group-tab-icon", html: icon(GROUP_ICON[g.group] || "hash", 20) }));
+      btn.appendChild(el("span", { class: "group-tab-label", text: GROUP_LABEL_KO[g.group] || g.group }));
       btn.addEventListener("click", () => {
         // ★ 그룹 활성화는 showTab() 안에서 한 곳에서만 처리한다 - 여기서
         // 미리 _activeGroup 을 바꿔버리면 showTab() 이 "이미 그 그룹에
         // 있다"고 오판해서, 아래 설정 잠금 재확인이 걸리지 않는다.
-        showTab(g.tabs[0][0]);
+        showTab(_lastTabInGroup[g.group] || g.tabs[0][0]);
       });
       groupNav.appendChild(btn);
     });
 
-    // ★ 활성 그룹 표시는 여기서 한 번에 - iOS 세그먼트 컨트롤처럼 선택된
-    // 것만 카드 배경 + 그림자를 준다.
     const activeIdx = NAV.findIndex((g) => g.group === _activeGroup);
     Array.from(groupNav.children).forEach((btn, i) => {
       btn.classList.toggle("active", i === activeIdx);
+      btn.setAttribute("aria-current", i === activeIdx ? "page" : "false");
     });
   }
 
+  // ━━ 하위 탭 칩(모바일) - 지금 그룹 안의 다른 화면들을 가로로 미는 알약
+  // 한 줄로. _activeTabIs() 등 다른 코드가 ".sub-nav a[data-tab]" 를 그대로
+  // 찾으므로(아래 ~2280줄 부근), 데스크톱에서 숨겨도(CSS) 이 요소 자체는
+  // 계속 만든다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   function renderSubNav() {
-    const subNav = $(".sub-nav");
+    const subNav = $("#sub-nav");
     if (!subNav) return;
     subNav.innerHTML = "";
     const group = NAV.find((g) => g.group === _activeGroup);
@@ -447,6 +565,8 @@
       });
       subNav.appendChild(a);
     });
+    // 탭이 하나뿐인 그룹은 칩이 있어 봐야 고를 게 없다 - CSS 가 숨긴다.
+    subNav.classList.toggle("single-tab", group.tabs.length <= 1);
   }
 
   // 숫자키 1~N 으로 그룹 이동 (입력칸에 포커스가 있으면 무시한다).
@@ -455,7 +575,8 @@
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     const n = parseInt(e.key, 10);
     if (!isNaN(n) && n >= 1 && n <= NAV.length) {
-      showTab(NAV[n - 1].tabs[0][0]);
+      const g = NAV[n - 1];
+      showTab(_lastTabInGroup[g.group] || g.tabs[0][0]);
     }
   });
 
@@ -485,8 +606,9 @@
       down: "프로그램과 끊김", connecting: "프로그램 연결 중",
     };
     // ★ 글자 라벨 대신 아이콘 하나로 - 모양까지 다르게 해서(색만으로 구분하지 않음) 알아보기 쉽게 한다.
-    const icons = { live: "✅", polling: "🔄", reconnecting: "🔄", down: "⚠️", connecting: "⏳" };
-    dot.textContent = icons[mode] || "❔";
+    // (이모지 대신 UI.icon() 의 선 아이콘 - 재디자인 지침대로 아이콘 세트를 통일한다.)
+    const iconNames = { live: "wifi", polling: "refresh", reconnecting: "refresh", down: "wifi-off", connecting: "clock" };
+    dot.innerHTML = icon(iconNames[mode] || "alert", 16);
     dot.dataset.mode = mode;
     dot.setAttribute("aria-label", labels[mode] || mode);
     // ★ 마우스를 올리면(모바일은 눌러서) 왜 이 상태인지 바로 설명이 보이게 한다 -
@@ -703,7 +825,7 @@
     if (!_dashChartUi || !_dashChart || _dashChart.el !== _dashChartUi.chartBox) {
       const wrap = el("div", { class: "card" });
       const head = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } });
-      head.appendChild(el("div", { html: "<b>📈 손익 추이 (오늘)</b>" }));
+      head.appendChild(el("div", { html: `<b>${_dashIcon("trending-up")} 손익 추이 (오늘)</b>` }));
       const seg = el("div", { class: "seg" });
       ["5분", "30분", "전체"].forEach((label, i) => {
         seg.appendChild(el("button", {
@@ -1046,7 +1168,7 @@
     // 실시간 로그 스트림이 없으니, 최근 청산 기록을 로그 형태로 대신
     // 보여준다. 국내주식 화면에 "로그가 있다"는 인상과 맞춘다.
     const details = el("details", { open: true });
-    details.appendChild(el("summary", { text: "📜 진행 로그 (최근 청산)" }));
+    details.appendChild(el("summary", { html: `${_dashIcon("clock")} 진행 로그 (최근 청산)` }));
     const box = el("div", { class: "console" });
     const sorted = (closedRows || []).slice().sort((a, b) => (b.exit_time || 0) - (a.exit_time || 0));
     if (!sorted.length) {
@@ -1078,7 +1200,7 @@
     if (!ui || !_externalCharts[chartKey] || _externalCharts[chartKey].el !== ui.chartBox) {
       const wrap = el("div", { class: "card" });
       const head = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--s2)" } });
-      head.appendChild(el("div", { html: "<b>📈 손익 추이 (오늘)</b>" }));
+      head.appendChild(el("div", { html: `<b>${_dashIcon("trending-up")} 손익 추이 (오늘)</b>` }));
       const seg = el("div", { class: "seg" });
       wrap.appendChild(head);
       const chartBox = el("div");
@@ -1342,10 +1464,10 @@
   function _buildSymbolChartCard(key) {
     const card = el("div", { class: "card" });
     const head = el("div", { class: "ctl-head" });
-    head.appendChild(el("b", { text: "🔎 종목 시세 · 매매 시점" }));
+    head.appendChild(el("b", { html: `${_dashIcon("chart")} 종목 시세 · 매매 시점` }));
     head.appendChild(infoIcon("● 보유 중 · ✓ 오늘 매매한 종목 · 그 밖은 감시 목록입니다.\n분봉 시세 위에 매수(▲)·매도(▼) 시점을 표시합니다. 봉에 마우스를 올리면 자세히 보입니다."));
     const select = el("select", { class: "sym-select" });
-    const detail = el("button", { class: "b small", text: "🔍 상세보기" });
+    const detail = el("button", { class: "b small", html: `${_dashIcon("search")} 상세보기` });
     detail.disabled = true;
     const actions = el("div", { class: "ctl-actions" });
     actions.appendChild(select);
@@ -1463,7 +1585,9 @@
       body.appendChild(tr);
     });
     table.appendChild(body);
-    return el("div", { class: "mini-table-wrap" }, [table]);
+    // ★ table-wrap(가로 스크롤)·scroll-box(세로 높이 제한) 는 공용 디자인 계약 클래스 -
+    //   후보·보유 목록이 길어져도 패널 전체가 한없이 늘어나지 않는다.
+    return el("div", { class: "mini-table-wrap table-wrap scroll-box" }, [table]);
   }
 
   // positions 객체({id: 포지션}) → 화면용 행. 국내·해외·암호화폐가 같은 모양이 된다.
@@ -1491,7 +1615,7 @@
   function renderHoldingsCard(rows, opts) {
     opts = opts || {};
     const card = el("div", { class: "card" });
-    const h = el("h2", { text: `💼 보유 (${rows.length})` });
+    const h = el("h2", { html: `${_dashIcon("wallet")} 보유 (${rows.length})` });
     h.appendChild(infoIcon("평가손익은 현재가를 받지 못한 종목은 고점 기준으로 어림한 값입니다."));
     card.appendChild(h);
     if (!rows.length) {
@@ -1528,7 +1652,7 @@
   function renderWatchCard(rows, opts) {
     opts = opts || {};
     const card = el("div", { class: "card" });
-    const h = el("h2", { text: `🎯 ${opts.title || "감시"} (${rows.length})` });
+    const h = el("h2", { html: `${_dashIcon("target")} ${esc(opts.title || "감시")} (${rows.length})` });
     if (opts.help) h.appendChild(infoIcon(opts.help));
     card.appendChild(h);
     if (!rows.length) {
@@ -1693,7 +1817,7 @@
       const actions = el("div", { class: "ctl-actions" });
       if (!running) {
         actions.appendChild(el("button", {
-          class: "b", text: "▶ 자동매매 시작",
+          class: "b", html: `${_dashIcon("play")} 자동매매 시작`,
           onclick: () => confirmPassword(async () => {
             try {
               busy(card, true);
@@ -1707,7 +1831,7 @@
         }));
       } else {
         actions.appendChild(el("button", {
-          class: "b quiet-danger", text: "⏹ 정지",
+          class: "b quiet-danger", html: `${_dashIcon("pause")} 정지`,
           onclick: () => confirmPassword(async () => {
             try {
               await api(o.stopUrl, { method: "POST", body: { close_positions: false } });
@@ -1724,7 +1848,7 @@
         }));
         if (held > 0) {
           actions.appendChild(el("button", {
-            class: "b danger", text: "⏹ 전량 청산 후 정지",
+            class: "b danger", html: `${_dashIcon("pause")} 전량 청산 후 정지`,
             onclick: () => confirmPassword(async () => {
               if (!confirm(`보유 ${m.name} ${_heldCount(latest)}종목을 모두 정리하고 멈춥니다. 되돌릴 수 없습니다. 진행할까요?`)) return;
               try {
@@ -1825,7 +1949,7 @@
   function renderMarketOverviewCard(entries) {
     const card = el("div", { class: "card ctl" });
     const head = el("div", { class: "ctl-head" });
-    head.appendChild(el("b", { text: "🔀 시장별 자동매매" }));
+    head.appendChild(el("b", { html: `${_dashIcon("layers")} 시장별 자동매매` }));
     head.appendChild(infoIcon("시작·정지 같은 조작은 각 시장 탭에서만 합니다 - 여러 시장을 한 번에 조작하는 건 위험할 수 있습니다."));
     card.appendChild(head);
     card.appendChild(_miniTable([
@@ -1854,6 +1978,45 @@
   // 1회만 만들고, 이후엔 각 섹션 컨테이너의 내용만 교체한다.
   let _dashEls = null;
   let _dashMarketFilter = "all";  // ★ "통합"/"국내주식"/"해외주식"/"암호화폐" 필터 - 대시보드/종목선정 공통.
+
+  // ★ 데코용 이모지는 아이콘으로 - window.UI.icon 이 아직 없을 수도 있어(다른 코스가
+  //   추가하는 아이콘 세트) 항상 존재를 먼저 확인한다. 못 찾으면 조용히 빈 문자열.
+  function _dashIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+
+  function _dashKpiCard(label, value, sub, cls) {
+    const kpi = el("div", { class: "kpi" });
+    kpi.appendChild(el("div", { class: "kpi-label", text: label }));
+    kpi.appendChild(el("div", { class: "kpi-value " + (cls || ""), text: value }));
+    kpi.appendChild(el("div", { class: "kpi-sub", text: sub || " " }));
+    return kpi;
+  }
+
+  // ★★★ "스크롤을 많이 안 해도 첫 화면에서 가장 중요한 숫자가 보이게" - 시장마다(통합
+  // 포함) 늘 같은 여섯 칸(모드·오늘 손익·보유·현금·오늘 거래·상태)을 상세 strip·탭보다
+  // 앞에 둔다. status 는 시장별 상태 객체(또는 통합용으로 직접 구성한 값)를 그대로 받아
+  // _tradeStats() 로 계산한다 - 아래 상세 strip(renderExternalStrip)과 같은 계산 기준이라
+  // 숫자가 서로 어긋나 보이지 않는다.
+  function _dashKpiGrid(status, opts) {
+    opts = opts || {};
+    const unit = opts.unit || "won";
+    const s = _tradeStats(status);
+    const money = _moneyOf(unit);
+    const signedMoney = _signedMoneyOf(unit);
+    const running = !!status.running;
+    const modeTxt = opts.modeText || (running ? `${_modeText(status)} 중` : `꺼짐 · ${_modeText(status)}`);
+    const halt = status.halt || (status.halted ? { halted: true, reason: status.halt_reason } : {});
+    const haltTxt = halt.halted ? "매수 중단" : (status.degraded ? "시세 저하" : "정상");
+    const grid = el("div", { class: "kpi-grid" });
+    grid.appendChild(_dashKpiCard("모드", modeTxt));
+    grid.appendChild(_dashKpiCard("오늘 손익", signedMoney(s.realized), "비용 " + money(Math.max(0, s.costs)), dir(s.realized)));
+    grid.appendChild(_dashKpiCard("보유", `${s.heldCount}종`, money(s.heldAmount)));
+    grid.appendChild(_dashKpiCard("현금", status.cash != null ? money(status.cash) : "-"));
+    grid.appendChild(_dashKpiCard("오늘 거래", `${s.sellCount}건`, "승률 " + pct0(s.winRate)));
+    grid.appendChild(_dashKpiCard("상태", haltTxt, halt.reason || " ", halt.halted ? "fall" : ""));
+    return grid;
+  }
 
   function renderMarketFilterSeg(currentValue, onChange) {
     const seg = el("div", { class: "seg" });
@@ -1887,19 +2050,36 @@
     };
     DASH_MARKETS.forEach((key) => {
       els.m[key] = {
-        card: el("div"), strip: el("div"), chart: el("div"), sym: el("div"),
-        cols: el("div", { class: "cols" }), log: el("div"),
+        kpi: el("div"), card: el("div"), strip: el("div"), chart: el("div"), sym: el("div"),
+        cols: el("div", { class: "cols grid-2" }), log: el("div"), tabsWrap: el("div"),
       };
     });
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: _dashIcon("dashboard") + " 대시보드" }));
+    panel.appendChild(head);
     els.marketFilter.appendChild(renderMarketFilterSeg(_dashMarketFilter, (key) => {
       _dashMarketFilter = key;
       _applyDashMarketFilter();
     }));
     panel.appendChild(els.marketFilter);
     panel.appendChild(els.banners);
+    // ★★★ "긴 스크롤 없이" - 시장별로 상태 카드·상세 지표 아래에 쌓이던
+    // 손익추이·종목시세·보유목록·진행로그 네 덩어리를 탭(renderTabs)으로
+    // 나눈다. 탭을 눌러도 실제 DOM 노드(g.chart/g.sym/g.cols/g.log)는 그대로
+    // 재사용되므로(build() 가 매번 같은 참조를 돌려준다) 폴링·SSE 갱신은
+    // 탭이 숨겨져 있어도 계속되고, 다시 그 탭을 열면 최신 내용이 바로 보인다.
     DASH_MARKETS.forEach((key) => {
       const g = els.m[key];
-      [g.card, g.strip, g.chart, g.sym, g.cols, g.log].forEach((node) => panel.appendChild(node));
+      panel.appendChild(g.kpi);
+      panel.appendChild(g.card);
+      panel.appendChild(g.strip);
+      panel.appendChild(g.tabsWrap);
+      renderTabs(g.tabsWrap, "dash:" + key, [
+        { id: "holdings", label: "보유종목", build: () => g.cols },
+        { id: "chart", label: "차트", build: () => g.chart },
+        { id: "sym", label: "판단 근거", build: () => g.sym },
+        { id: "log", label: "실시간 로그", build: () => g.log },
+      ]);
     });
     // ★ 상태 카드와 국내 로그 콘솔은 여기서 딱 한 번만 채운다 - 이후 renderDashboard() 가
     //   몇 번을 다시 불려도 절대 건드리지 않는다(쌓인 로그·자체 폴링 타이머 유지).
@@ -1981,6 +2161,7 @@
       [["crypto", cryptoStatus, cryptoToday, "won", "market"], ["overseas", overseasStatus, overseasToday, "usd", "symbol"]]
         .forEach(([key, status, today, unit, idKey]) => {
           const g = els.m[key];
+          fill(g.kpi, _dashKpiGrid(Object.assign({}, status, { closed: today }), { unit }));
           fill(g.strip, renderExternalStrip({ positions: status.positions, closed: today }, key, unit));
           fill(g.chart, renderExternalPnlChart(today, key, status.positions));
           _symCharts[key].update(_chartSymbols(key, status, today));
@@ -1994,6 +2175,7 @@
       // ── 스윙 탭: 감시 목록만 다르다(관심 종목이 아니라 추세 필터를 통과한 후보) ──
       {
         const g = els.m.swing;
+        fill(g.kpi, _dashKpiGrid(Object.assign({}, swingStatus, { closed: swingToday }), { unit: "won" }));
         fill(g.strip, renderExternalStrip({ positions: swingStatus.positions, closed: swingToday }, "swing", "won"));
         fill(g.chart, renderExternalPnlChart(swingToday, "swing", swingStatus.positions));
         fillAll(g.cols, [
@@ -2046,6 +2228,14 @@
         ..._nsPositions("domestic", snap.positions), ..._nsPositions("crypto", cryptoStatus.positions),
         ..._nsPositions("overseas", overseasStatus.positions), ..._nsPositions("swing", swingStatus.positions),
       };
+
+      // ★ 통합 탭의 KPI - 현금은 시장마다 통화가 달라(원화·달러) 단순 합산하지 않고 "-"로 둔다.
+      const allRunning = [dst, overseasStatus, cryptoStatus, swingStatus].filter((st) => st && st.running).length;
+      fill(g.kpi, _dashKpiGrid({
+        running: allRunning > 0, positions: unifiedPositions, closed: allToday,
+        halt: snap.halted ? { halted: true, reason: snap.halt_reason } : {},
+        degraded: snap.degraded, cash: null,
+      }, { unit: "won", modeText: `${allRunning}/4 시장 가동` }));
 
       const stripWrap = el("div");
       stripWrap.appendChild(renderExternalStrip({ positions: unifiedPositions, closed: allToday }, "unified", "won"));
@@ -2126,6 +2316,13 @@
     fill(_dashEls.banners, bannersWrap);
 
     const dm = _dashEls.m.domestic;
+    // ★ 국내 KPI 는 SSE 스냅샷(snap - 보유·청산·중단 여부)과 /api/status 폴링
+    //   (_lastDomesticStatus - 실행 여부·현금·모드)을 합쳐서 만든다. 각자 한쪽만 갖고 있다.
+    fill(dm.kpi, _dashKpiGrid(Object.assign({}, _lastDomesticStatus || {}, {
+      positions: snap.positions, closed: snap.closed,
+      halt: snap.halted ? { halted: true, reason: snap.halt_reason } : {},
+      degraded: snap.degraded,
+    }), { unit: "won" }));
     fill(dm.strip, renderStrip(snap));
     fill(dm.chart, renderDashChart(snap));
     _symCharts.domestic.update(_chartSymbols("domestic", snap, snap.closed));
@@ -2199,6 +2396,11 @@
   // ★ 좌측 상단(매매 상태)을 시장별 이모지 + 우하단 점(모드 색)의 아이콘으로 보여준다(글자 라벨
   // 없음) - 예전엔 "국내주식: 모의매매 중 · 해외주식: ..." 처럼 시장이 늘수록 문구가 계속 길어졌다.
   // 자세한 문구는 title(데스크톱 호버)과 클릭(모바일, #conn-indicator 와 같은 패턴)으로 본다.
+  const STATE_LABEL_KO = {
+    idle: "대기", sim: "시뮬레이션", paper: "모의매매", live: "실거래",
+    halt: "중단", degraded: "저하", web: "관찰", replay: "리플레이",
+  };
+
   function updateBand() {
     const band = $("#band");
     const title = $("#band-title");
@@ -2258,6 +2460,18 @@
     }
 
     band.dataset.state = state;
+
+    // ★ 사이드바 상단의 "현재 모드 배지"(#sidebar-mode-badge) 도 같은
+    // state 를 그대로 반영한다 - 사이드바가 항상 떠 있는 데스크톱·태블릿
+    // 에서는 상단바까지 안 봐도 왼쪽에서 바로 보인다.
+    const sideBadge = $("#sidebar-mode-badge");
+    if (sideBadge) {
+      sideBadge.dataset.state = state;
+      const label = STATE_LABEL_KO[state] || state;
+      const labelEl = sideBadge.querySelector(".sidebar-mode-badge-label");
+      if (labelEl) labelEl.textContent = label; else sideBadge.textContent = label;
+    }
+
     title.innerHTML = "";
     if (!icons.length) {
       title.textContent = "연결 중...";
@@ -2308,7 +2522,7 @@
         // 통과하는데 시세를 못 가져온다"는 상황의 원인을 알 수 없었다.
         if (s.failures && Object.keys(s.failures).length) {
           box.className = "banner danger";
-          box.appendChild(el("div", { html: "<b>⚠️ 최근 실패한 시세 API</b>" }));
+          box.appendChild(el("div", { html: `<b>${_selIcon("alert")} 최근 실패한 시세 API</b>` }));
           Object.entries(s.failures).forEach(([api_name, msg]) => {
             box.appendChild(el("div", { class: "hint", text: `· ${api_name}: ${msg}` }));
           });
@@ -2432,7 +2646,13 @@
 
   // ━━ 종목 선정 목록(통합·국내·해외·암호화폐 공통) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // "전체 테마주 중 이 종목이 왜 선정(또는 탈락)됐는지"를 한 줄씩 - 선정 종목이 위, 탈락 종목은 사유와 함께 아래.
-  let _selShowAll = true;
+  // ★ 데코용 이모지는 아이콘으로.
+  function _selIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+  // "선정만/전체" 2단이던 필터를 "선정 결과/탈락 사유/전체 종목" 3단으로 - 탈락 사유만 보고
+  // 싶을 때도 전체를 스크롤해서 찾을 필요가 없게 한다.
+  let _selShowMode = "selected"; // selected | rejected | all
 
   // 테마 하나와 그 구성 종목 하나 → 한 줄짜리 판정 근거.
   function _themeMemberWhy(t, m, unit) {
@@ -2526,20 +2746,23 @@
     if (opts.help) head.appendChild(infoIcon(opts.help));
     const holder = el("div");
     function draw() {
-      const shown = _selShowAll ? rows : rows.filter((r) => r.selected);
+      const shown = _selShowMode === "all" ? rows
+        : _selShowMode === "rejected" ? rows.filter((r) => !r.selected)
+        : rows.filter((r) => r.selected);
       if (!shown.length) {
-        fill(holder, el("div", { class: "hint", text: opts.empty || "선정된 종목이 없습니다." }));
+        const emptyText = _selShowMode === "rejected" ? "탈락한 종목이 없습니다." : (opts.empty || "선정된 종목이 없습니다.");
+        fill(holder, el("div", { class: "hint empty", text: emptyText }));
         return;
       }
       fill(holder, _selTable(shown, opts));
     }
     if (rows.length !== nSel) {
       const seg = el("div", { class: "seg" });
-      [["전체", true], ["선정만", false]].forEach(([label, all]) => {
+      [["선정 결과", "selected"], ["탈락 사유", "rejected"], ["전체 종목", "all"]].forEach(([label, mode]) => {
         seg.appendChild(el("button", {
-          text: label, class: _selShowAll === all ? "active" : "",
+          text: label, class: _selShowMode === mode ? "active" : "",
           onclick: (e) => {
-            _selShowAll = all;
+            _selShowMode = mode;
             $$("button", seg).forEach((b) => b.classList.remove("active"));
             e.target.classList.add("active");
             draw();
@@ -2668,7 +2891,7 @@
         empty: "선정된 종목이 없습니다 - [설정] → 해외주식에서 관심 종목을 추가하거나 테마 자동 산정을 켜세요.",
       }));
       const errs = (rep && rep.errors) || [];
-      if (errs.length) wrap.appendChild(el("div", { class: "banner warn", text: "⚠️ 일부 시세 조회 실패: " + errs[0] }));
+      if (errs.length) wrap.appendChild(el("div", { class: "banner warn", html: `${_selIcon("alert")} 일부 시세 조회 실패: ${esc(errs[0])}` }));
     } catch (e) {
       wrap.appendChild(el("div", { class: "hint", text: "불러오지 못했습니다: " + e.message }));
     }
@@ -2725,6 +2948,9 @@
     if (!root) return;
     if (!_selSeg || !root.contains(_selSeg)) {
       root.innerHTML = "";
+      const head = el("div", { class: "page-head" });
+      head.appendChild(el("h1", { html: _selIcon("target") + " 종목 선정" }));
+      root.appendChild(head);
       _selSeg = renderMarketFilterSeg(_selectionMarketFilter, (key) => {
         _selectionMarketFilter = key;
         renderSelection(_selectionData);
@@ -2773,6 +2999,27 @@
     panel.appendChild(renderSourceBanner());
 
     const report = data.selection;
+
+    // ★★★ "많은 스크롤 없이 첫 화면에서 가장 중요한 숫자가" - 신호가 아직 없어도
+    // (report 가 없어도) 늘 같은 자리에 핵심 수치 세 칸을 보여준다.
+    {
+      const rs0 = data.rescreen || {};
+      const nSelDom = report ? _selectionRows(report, { unit: "won", watch: [] }).filter((r) => r.selected).length : 0;
+      const nAllDom = report ? ((report.candidates || []).length) : 0;
+      const grid = el("div", { class: "kpi-grid" });
+      const kpi = (label, value, sub) => {
+        const k = el("div", { class: "kpi" });
+        k.appendChild(el("div", { class: "kpi-label", text: label }));
+        k.appendChild(el("div", { class: "kpi-value", text: value }));
+        k.appendChild(el("div", { class: "kpi-sub", text: sub || " " }));
+        return k;
+      };
+      grid.appendChild(kpi("선정 종목", report ? `${nSelDom}종` : "-", report ? `전체 ${nAllDom}종 중` : "아직 선정 전"));
+      grid.appendChild(kpi("갱신 시각", report ? _hhmmss(report.at) : "-"));
+      grid.appendChild(kpi("다음 재선정", rs0.next_at || "-", rs0.remain_minutes != null ? `${rs0.remain_minutes}분 뒤` : " "));
+      panel.appendChild(grid);
+    }
+
     if (!report) {
       // ★★★ "아직 스크리닝 결과가 없습니다"만 보여주면 고장으로 오해한다.
       // 실제로는 "신규 진입 시간(기본 09:20~14:00)이 지나서 스크리닝을
@@ -2781,7 +3028,7 @@
       const ses = data.session || {};
       const box = el("div", { class: ses.trading === false ? "banner" : "banner warn" });
       if (ses.trading === false && ses.why) {
-        box.appendChild(el("div", { html: `<b>지금은 종목을 선정하지 않습니다 — ${ses.label || ""}</b>` }));
+        box.appendChild(el("div", { html: `<b>지금은 종목을 선정하지 않습니다 — ${esc(ses.label || "")}</b>` }));
         box.appendChild(el("div", { class: "hint", text: ses.why }));
         box.appendChild(el("div", {
           class: "hint",
@@ -2813,13 +3060,13 @@
     // 예전엔 선정 기준 칩 + 요약 + 갱신시각 + 재선정안내가 각각 한 줄씩
     // 차지해 화면 위쪽을 다 먹었다. 결론(요약) 한 줄만 크게 두고, 나머지는
     // 한 줄에 모아 아이콘 뒤로 숨긴다.
-    panel.appendChild(el("div", { html: `<b>${report.summary || ""}</b>`, style: { margin: "var(--s2) 0" } }));
+    panel.appendChild(el("div", { html: `<b>${esc(report.summary || "")}</b>`, style: { margin: "var(--s2) 0" } }));
 
     const metaRow = el("div", {
       class: "hint",
       style: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: "var(--s3)", margin: "6px 0" },
     });
-    metaRow.appendChild(el("span", { text: "🕒 " + _hhmmss(report.at) }));
+    metaRow.appendChild(el("span", { html: _selIcon("clock") + " " + _hhmmss(report.at) }));
 
     const rs = data.rescreen || {};
     if (rs.every_minutes) {
@@ -2865,7 +3112,7 @@
     const crit = (report.criteria && report.criteria.text) || [];
     if (crit.length) {
       const cell = el("span");
-      cell.appendChild(el("span", { text: "📋 선정 기준" }));
+      cell.appendChild(el("span", { html: _selIcon("sliders") + " 선정 기준" }));
       cell.appendChild(infoIcon(crit.join("\n")));
       metaRow.appendChild(cell);
     }
@@ -2877,7 +3124,7 @@
     // 원인(어떤 API 가 무슨 이유로 실패했는지)을 알 방법이 없었다.
     if (report.errors && report.errors.length) {
       const errBox = el("div", { class: "banner danger" });
-      errBox.appendChild(el("div", { html: "<b>⚠️ 시세 조회에 실패했습니다 - 아래가 실제 오류입니다</b>" }));
+      errBox.appendChild(el("div", { html: `<b>${_selIcon("alert")} 시세 조회에 실패했습니다 - 아래가 실제 오류입니다</b>` }));
       report.errors.forEach((e) => {
         errBox.appendChild(el("div", { class: "hint", text: "· " + e }));
       });
@@ -2941,11 +3188,18 @@
 
   // ★★★ 국내·해외·암호화폐·통합이 같은 요약 항목을 쓴다(누적 손익·거래·승률·손익비·MDD).
   // 예전엔 국내만 수익률까지 6칸, 나머지는 4칸이었다.
+  // ★ 데코용 이모지는 아이콘으로.
+  function _perfIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+
+  // ★★★ "스크롤 없이 첫 화면에서 가장 중요한 숫자가" - 예전 가로 strip 을
+  // 공용 kpi-grid 카드(라벨/큰 값/보조줄)로 바꿨다. 계산식은 그대로다.
   function renderPerfSummary(t, currency) {
     // ★ el(..., {text}) 로 꽂히는 값(textContent)이라 텍스트("\n") 버전을 쓴다.
     const money = currency === "usd" ? _usdSignedWithKrwText : (v) => signed(v, "won");
     const plainMoney = currency === "usd" ? _usdWithKrwText : won;
-    const strip = el("div", { class: "strip strip-perf" });
+    const grid = el("div", { class: "kpi-grid" });
     [
       // ★★★ "총 얼마가 투입되서 실현이익이 몇프로인지 알수있게" 요청 - "총 매수금액"(투입 원금)과
       // 그 대비 손익률을 추가한다(renderPerfBody 가 agg.trades 로 계산해 t.invested 에 실어 준다).
@@ -2957,13 +3211,14 @@
       { label: "손익비", v: t.profit_factor, fmt: (v) => (v == null ? "∞" : v.toFixed(2)) },
       { label: "MDD", v: t.mdd, fmt: money },
     ].forEach((c) => {
-      const cell = el("div", { class: "cell" });
-      cell.appendChild(el("div", { class: "label", text: c.label }));
+      const cell = el("div", { class: "kpi" });
+      cell.appendChild(el("div", { class: "kpi-label", text: c.label }));
       const tone = c.label === "누적 손익" || c.label === "MDD" || c.label === "수익률" ? dir(c.v || 0) : "";
-      cell.appendChild(el("div", { class: "value " + tone, text: c.fmt(c.v) }));
-      strip.appendChild(cell);
+      cell.appendChild(el("div", { class: "kpi-value " + tone, text: c.fmt(c.v) }));
+      cell.appendChild(el("div", { class: "kpi-sub", text: " " }));
+      grid.appendChild(cell);
     });
-    return strip;
+    return grid;
   }
 
   // 국내는 서버(ledger.totals)가 계산해 주고, 해외·암호화폐·통합은 청산 기록에서 직접 센다.
@@ -3226,23 +3481,23 @@
       panel.appendChild(n);
     }
     if (!totals.trades) {
-      panel.appendChild(el("div", { class: "hint", text: "아직 매매 기록이 없습니다." }));
+      panel.appendChild(el("div", { class: "hint empty", text: "아직 매매 기록이 없습니다." }));
     }
-    const seg = el("div", { class: "seg", style: { margin: "var(--s3) 0" } });
-    const gridBox = el("div");
-    [["trades", "거래내역"], ["symbol", "종목별"], ["daily", "일자별"], ["monthly", "월별"], ["technique", "기법별"]].forEach(([id, label], i) => {
-      seg.appendChild(el("button", {
-        text: label, class: i === 0 ? "active" : "",
-        onclick: (e) => {
-          $$("button", seg).forEach((b) => b.classList.remove("active"));
-          e.target.classList.add("active");
-          renderPerfGrid(gridBox, agg, id, currency);
-        },
-      }));
-    });
-    panel.appendChild(seg);
-    panel.appendChild(gridBox);
-    renderPerfGrid(gridBox, agg, "trades", currency);
+    // ★★★ "많은 스크롤 없이" - 예전엔 직접 만든 세그먼트가 눌린 표 하나만 바꿔 끼웠는데(선택
+    // 상태를 기억하지 않음), 공용 renderTabs() 로 바꿔 다른 메뉴에 갔다 와도 보던 표(거래내역/
+    // 종목별/일자별/월별/기법별)가 그대로 유지된다.
+    const gridTab = (id, currency2) => {
+      const box = el("div");
+      renderPerfGrid(box, agg, id, currency2);
+      return box;
+    };
+    renderTabs(panel, "perf", [
+      { id: "trades", label: "거래내역", build: () => gridTab("trades", currency) },
+      { id: "symbol", label: "종목별", build: () => gridTab("symbol", currency) },
+      { id: "daily", label: "일자별", build: () => gridTab("daily", currency) },
+      { id: "monthly", label: "월별", build: () => gridTab("monthly", currency) },
+      { id: "technique", label: "기법별", build: () => gridTab("technique", currency) },
+    ]);
   }
 
   // ★★★ "모든 실적·이력 메뉴는 통합/국내주식/해외주식/암호화폐로 구분" + "네 탭의 내용과 항목을
@@ -3250,6 +3505,9 @@
   async function renderPerf(domesticData, group) {
     const panel = $('.panel[data-panel="perf"]');
     panel.innerHTML = "";
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: _perfIcon("chart") + " 성과" }));
+    panel.appendChild(head);
     const f = _perfMarketFilter;
     const filterRow = el("div", { class: "filter-row" });
     filterRow.appendChild(renderMarketFilterSeg(f, (key) => {
@@ -3500,6 +3758,9 @@
     const panel = $('.panel[data-panel="journal"]');
     const f = _journalMarketFilter;
     panel.innerHTML = "";
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: (window.UI && window.UI.icon ? window.UI.icon("book") : "") + " 매매일지" }));
+    panel.appendChild(head);
     const filterRow = el("div", { class: "filter-row" });
     filterRow.appendChild(renderMarketFilterSeg(f, (key) => {
       _journalMarketFilter = key;
@@ -3573,6 +3834,33 @@
       body.appendChild(box);
       return;
     }
+
+    // ★★★ "스크롤 없이 첫 화면에서 가장 중요한 숫자가" - 표(또는 시장별 요약)를 보기 전에
+    // 그날의 매수·매도·익절·손절 건수를 먼저 보여준다.
+    {
+      const sellsAll = events.filter((e) => e.kind === "sell");
+      const buysAll = events.filter((e) => e.kind === "buy");
+      const wins = sellsAll.filter((e) => (e.pnl || 0) > 0).length;
+      const losses = sellsAll.filter((e) => (e.pnl || 0) < 0).length;
+      const pnlSum = sellsAll.reduce((a, e) => a + (e.pnl || 0), 0);
+      const kGrid = el("div", { class: "kpi-grid" });
+      const kpi = (label, value, sub, cls) => {
+        const k = el("div", { class: "kpi" });
+        k.appendChild(el("div", { class: "kpi-label", text: label }));
+        k.appendChild(el("div", { class: "kpi-value " + (cls || ""), text: value }));
+        k.appendChild(el("div", { class: "kpi-sub", text: sub || " " }));
+        return k;
+      };
+      kGrid.appendChild(kpi("매수", `${buysAll.length}건`));
+      kGrid.appendChild(kpi("매도", `${sellsAll.length}건`));
+      kGrid.appendChild(kpi("익절", `${wins}건`, "", wins ? "rise" : ""));
+      kGrid.appendChild(kpi("손절", `${losses}건`, "", losses ? "fall" : ""));
+      kGrid.appendChild(f === "all"
+        ? kpi("실현손익", "-", "원화·달러 혼합 - 아래 표 참고")
+        : kpi("실현손익", sellsAll.length ? _signedMoneyOf(f === "overseas" ? "usd" : "won")(pnlSum) : "-", "", dir(pnlSum)));
+      body.appendChild(kGrid);
+    }
+
     if (f === "all") {
       // ★★★ "통합은 요약만" - 세 시장의 매수·매도 이력을 한 표에 섞으면 너무 길다. 그날 시장별
       // 건수·승패·실현손익만 보여주고, 상세 이력은 각 시장 탭에서 본다.
@@ -3623,9 +3911,16 @@
   // 외부 입력이 그대로 섞여 들어가는 자리가 아니다 - compose() 참고).
   let _marketReviewFilter = "all";
 
+  function _mrevIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+
   async function loadMarketReviews() {
     const panel = $('.panel[data-panel="marketreview"]');
     panel.innerHTML = "";
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: _mrevIcon("globe") + " 시장 평가" }));
+    panel.appendChild(head);
     const filterRow = el("div", { class: "filter-row" });
     const seg = el("div", { class: "seg" });
     [["all", "🔀 전체"], ["domestic", "🇰🇷 국내"], ["overseas", "🌍 해외"]].forEach(([key, label]) => {
@@ -3662,20 +3957,76 @@
       }));
       return;
     }
-    const list = el("div", { style: { display: "flex", flexDirection: "column", gap: "var(--s3)" } });
-    rows.forEach((r) => {
+    // ★★★ "스크롤 없이 첫 화면에서 가장 중요한 숫자가" - 목록을 보기 전에 건수 요약.
+    const domCount = rows.filter((r) => r.market !== "overseas").length;
+    const ovsCount = rows.filter((r) => r.market === "overseas").length;
+    const kGrid = el("div", { class: "kpi-grid" });
+    const kpi = (label, value, sub) => {
+      const k = el("div", { class: "kpi" });
+      k.appendChild(el("div", { class: "kpi-label", text: label }));
+      k.appendChild(el("div", { class: "kpi-value", text: value }));
+      k.appendChild(el("div", { class: "kpi-sub", text: sub || " " }));
+      return k;
+    };
+    kGrid.appendChild(kpi("전체", `${rows.length}건`));
+    kGrid.appendChild(kpi("국내", `${domCount}건`));
+    kGrid.appendChild(kpi("해외", `${ovsCount}건`));
+    kGrid.appendChild(kpi("최근 발송", _datetime(rows[0].sent_at)));
+    body.appendChild(kGrid);
+
+    // ★★★ "긴 스크롤 없이" - 최근 3건만 펼쳐서 보여주고, 그 이전 기록은
+    // 접어 둔다(details.acc, 기본 접힘) - 지난 리뷰를 찾아볼 사람만 편다.
+    const RECENT_N = 3;
+    const buildCard = (r) => {
       const card = el("div", { class: "card" });
       const marketLabel = r.market === "overseas" ? "🌍 해외" : "🇰🇷 국내";
       card.appendChild(el("div", { class: "hint", text: `${marketLabel} · ${_datetime(r.sent_at)}` }));
-      card.appendChild(el("div", { html: r.text || "", style: { marginTop: "var(--s2)", whiteSpace: "pre-line" } }));
-      list.appendChild(card);
-    });
+      // ★ [2-7] r.text 는 뉴스 헤드라인을 바탕으로 LLM 이 만든 시장 평가 글 - 외부(뉴스 제목)에서
+      // 온 문자열이 결국 이 안에 섞여 들어갈 수 있어 그대로 innerHTML 에 꽂으면 안 된다. esc() 로
+      // 이스케이프하되, 줄바꿈은 문자 그대로 남아 있으니(컨테이너의 white-space: pre-line 이
+      // 그 줄바꿈을 그대로 살려 보여준다) 개행이 없어지지 않는다.
+      card.appendChild(el("div", { html: esc(r.text || ""), style: { marginTop: "var(--s2)", whiteSpace: "pre-line" } }));
+      return card;
+    };
+    const list = el("div", { style: { display: "flex", flexDirection: "column", gap: "var(--s3)" } });
+    rows.slice(0, RECENT_N).forEach((r) => list.appendChild(buildCard(r)));
+    const rest = rows.slice(RECENT_N);
+    if (rest.length) {
+      const acc = el("details", { class: "acc" });
+      acc.appendChild(el("summary", { text: `이전 시장 평가 (${rest.length}건 더 보기)` }));
+      const accBody = el("div", { class: "acc-body", style: { display: "flex", flexDirection: "column", gap: "var(--s3)" } });
+      rest.forEach((r) => accBody.appendChild(buildCard(r)));
+      acc.appendChild(accBody);
+      list.appendChild(acc);
+    }
     body.appendChild(list);
   }
 
   registerPanel("marketreview", { onShow: () => loadMarketReviews() });
 
   // ━━ 매매 기법 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // ★★★ "심플&모던, 이모지 대신 아이콘" - 재편 대상 패널(매매 기법·소개·매매원칙·
+  // 릴리즈노트·준비연결·테마·설정·월간 리뷰·실험실)에서 공통으로 쓰는 아이콘 헬퍼.
+  // window.UI.icon 은 병렬로 작업 중인 다른 코스가 ui.js 에 추가하는 함수라 아직 이
+  // 브랜치에는 없을 수 있다 - 없으면 조용히 빈 문자열을 돌려줘 레이아웃이 깨지지 않게 한다.
+  function _pcIcon(name) {
+    return (window.UI && typeof window.UI.icon === "function") ? window.UI.icon(name) : "";
+  }
+  // ★ 아이콘 + 텍스트를 함께 담은 노드를 만든다(el() 의 html/text 는 둘 중 하나만
+  // 되므로 직접 조립한다). attrs 는 el() 에 그대로 넘어가므로 onclick·class 등을
+  // 평소처럼 쓸 수 있다 - 버튼·h2·span 어디에나 같은 함수를 쓴다.
+  function _pcIconEl(tag, iconName, text, attrs) {
+    attrs = Object.assign({}, attrs);
+    attrs.style = Object.assign({ display: "inline-flex", alignItems: "center", gap: "6px" }, attrs.style || {});
+    delete attrs.text;
+    delete attrs.html;
+    const node = el(tag, attrs);
+    const ic = _pcIcon(iconName);
+    if (ic) node.insertAdjacentHTML("beforeend", `<span class="icon" aria-hidden="true">${ic}</span>`);
+    node.appendChild(el("span", { text }));
+    return node;
+  }
 
   // ★★★ "사례별로 주가추이로 어떤 상황에서 종목을 선정하고 어떤 기법으로 매수·매도하는지
   // 그림으로" - 실제 시세가 아니라 각 기법의 발동 조건을 이해하기 쉽게 그린 도식이다.
@@ -3783,7 +4134,7 @@
       text: "각 기법이 실제로 어떤 주가 흐름에서 발동하는지 그린 예시 도식입니다 - 실제 시세 데이터가 아니라 "
         + "이해를 돕기 위한 그림입니다(점선은 그 기법이 보는 기준선, 점은 매수·매도가 일어나는 지점).",
     }));
-    [["entry", "📥 진입 기법 - 언제 사는가"], ["exit", "📤 청산 기법 - 언제 파는가"]].forEach(([phase, heading]) => {
+    [["entry", "진입 기법 - 언제 사는가"], ["exit", "청산 기법 - 언제 파는가"]].forEach(([phase, heading]) => {
       // ★ /api/playbook 의 "all" 목록은 시장마다(국내·암호화폐 등) 같은 기법을 한 번씩 따로 담고
       // 있다(같은 기법을 시장별로 켜고 끌 수 있어서) - 여기서는 패턴 자체가 궁금한 것이라 기법당
       // 한 장만 보여주고, 대신 "어느 시장에서 켜져 있는지"를 한 줄로 모은다.
@@ -3803,15 +4154,15 @@
       }
       const items = Array.from(byKey.values());
       if (!items.length) return;
-      wrap.appendChild(el("h2", { text: heading }));
-      const cols = el("div", { class: "cols" });
+      wrap.appendChild(_pcIconEl("h2", phase === "entry" ? "trending-up" : "trending-down", heading));
+      const cols = el("div", { class: "grid-2" });
       items.forEach((t) => {
         const card = el("div", { class: "card" });
         const onMarkets = t.markets.filter((m) => m.enabled).map((m) => (MARKETS[m.market] || {}).name || m.market);
         const statusText = t.alwaysOn ? "항상 켜짐(끌 수 없는 고정 규칙)"
           : onMarkets.length ? `켜짐: ${onMarkets.join("·")}` : "모든 시장에서 꺼짐";
         card.appendChild(el("div", {
-          html: `<b>${t.label}</b> ${techBadgeHTML(t.key, { label: t.alwaysOn ? "고정" : onMarkets.length ? "켜짐" : "꺼짐" })}`,
+          html: `<b>${esc(t.label)}</b> ${techBadgeHTML(t.key, { label: t.alwaysOn ? "고정" : onMarkets.length ? "켜짐" : "꺼짐" })}`,
         }));
         card.appendChild(el("div", { class: "hint", text: statusText }));
         card.appendChild(el("div", { html: techDiagramSVG(t.key) }));
@@ -3845,7 +4196,7 @@
     list.forEach((t) => {
       const tr = el("tr");
       tr.appendChild(el("td", { text: t.market === "crypto" ? "🪙" : "🇰🇷" }));
-      tr.appendChild(el("td", { html: `<b>${t.label}</b> <span class="hint">${t.key}</span>` }));
+      tr.appendChild(el("td", { html: `<b>${esc(t.label)}</b> <span class="hint">${esc(t.key)}</span>` }));
       tr.appendChild(el("td", {
         class: t.enabled ? "rise" : "hint",
         text: t.enabled ? "켜짐" : "꺼짐",
@@ -3864,7 +4215,7 @@
   }
 
   function renderTechBonus(bonus) {
-    const cards = el("div", { class: "cols" });
+    const cards = el("div", { class: "grid-2" });
     const MARKETS = [
       { key: "domestic", label: "국내주식" },
       { key: "overseas", label: "해외주식" },
@@ -3881,14 +4232,17 @@
       const card = el("div", { class: "card" });
       card.appendChild(el("div", { html: `<b>${label}</b>` }));
       const modeLabel = MODE_LABEL[m.learning_mode] || m.learning_mode || "-";
-      card.appendChild(el("div", { html: `매매 모델: <b>${modeLabel}</b>` }));
+      card.appendChild(el("div", { html: `매매 모델: <b>${esc(modeLabel)}</b>` }));
       const list = m.bonus || [];
       if (!list.length) {
         card.appendChild(el("div", { class: "hint", text: "표시할 기법이 없습니다." }));
       } else {
         list.forEach((t) => {
           const row = el("div", { style: { margin: "var(--s2) 0" } });
-          row.appendChild(el("div", { html: `${t.label} <b>×${t.multiplier.toFixed(2)}</b>` }));
+          // ★ [2-7] t.multiplier 가 null 이면 .toFixed 호출이 그대로 죽는다(화면 전체가 안 그려짐) -
+          // 숫자가 아니면 "-"로 보여준다. t.label 도 escape 해 서버 값이 마크업으로 해석되지 않게 한다.
+          const multText = typeof t.multiplier === "number" ? `×${t.multiplier.toFixed(2)}` : "-";
+          row.appendChild(el("div", { html: `${esc(t.label)} <b>${multText}</b>` }));
           row.appendChild(el("div", { class: "hint", text: t.why }));
           card.appendChild(row);
         });
@@ -3911,14 +4265,14 @@
     });
 
     const c1 = el("span");
-    c1.appendChild(el("span", { text: "📚 검증된 기법만 사용" }));
+    c1.appendChild(_pcIconEl("span", "book", "검증된 기법만 사용"));
     c1.appendChild(infoIcon(
       "여기 있는 기법은 모두 시장에서 널리 알려진, 문헌으로 검증된 것입니다. "
       + "각 기법의 원전과, 원전의 표준값을 우리가 어떻게 바꿨는지 목록의 ⓘ 에 적었습니다."));
     guide.appendChild(c1);
 
     const c2 = el("span");
-    c2.appendChild(el("span", { text: "🔒 켜짐/꺼짐은 수동" }));
+    c2.appendChild(_pcIconEl("span", "lock", "켜짐/꺼짐은 수동"));
     c2.appendChild(infoIcon(
       "어떤 기법을 후보로 둘지는 사용자가 직접 정합니다 - 프로그램이 스스로 켜고 끄지 않습니다.\n\n"
       + "바꾸려면 [설정] → 종목·진입·청산 화면의 '진입 기법'/'청산 기법' 체크박스를 조정하세요.\n\n"
@@ -3926,7 +4280,7 @@
     guide.appendChild(c2);
 
     const c3 = el("span");
-    c3.appendChild(el("span", { text: "🤖 자동 선정 로직" }));
+    c3.appendChild(_pcIconEl("span", "sliders", "자동 선정 로직"));
     c3.appendChild(infoIcon(
       "켜진 기법이 여러 개일 때, 매 순간 시세를 평가해 '지금 가장 강한 신호'를 골라 매매합니다.\n\n"
       + "① 후보 종목을 전부 평가 — 오늘의 감시 종목마다 켜진 기법을 모두 돌려 신호 강도(0~1점)를 매깁니다.\n\n"
@@ -3944,17 +4298,17 @@
     const allList = pb.all || [];
     const enabled = pb.enabled || [];
     renderTabs(panel, "playbook", [
-      { id: "entry", label: "📥 진입 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "entry"), "진입") },
-      { id: "exit", label: "📤 청산 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "exit"), "청산") },
-      { id: "example", label: "🖼 사례로 보기", build: () => renderTechExamples(allList) },
-      { id: "bonus", label: "🎯 시장별 모델·가산점", build: () => renderTechBonus(bonus) },
+      { id: "entry", label: "진입 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "entry"), "진입") },
+      { id: "exit", label: "청산 기법", build: () => renderTechFull(allList.filter((t) => t.phase === "exit"), "청산") },
+      { id: "example", label: "사례로 보기", build: () => renderTechExamples(allList) },
+      { id: "bonus", label: "시장별 모델·가산점", build: () => renderTechBonus(bonus) },
       {
-        id: "on", label: `✅ 켜진 기법 (${enabled.length})`,
+        id: "on", label: `켜진 기법 (${enabled.length})`,
         build: () => {
-          const cards = el("div", { class: "cols" });
+          const cards = el("div", { class: "grid-2" });
           enabled.forEach((t) => {
             const card = el("div", { class: "card" });
-            card.appendChild(el("div", { html: `<b>${t.label}</b> ${techBadgeHTML(t.key, { label: t.phase === "entry" ? "진입" : "청산" })}` }));
+            card.appendChild(el("div", { html: `<b>${esc(t.label)}</b> ${techBadgeHTML(t.key, { label: t.phase === "entry" ? "진입" : "청산" })}` }));
             card.appendChild(el("div", { class: "hint", text: t.description }));
             cards.appendChild(card);
           });
@@ -3962,7 +4316,7 @@
         },
       },
       {
-        id: "perf", label: "📊 오늘·실적",
+        id: "perf", label: "오늘·실적",
         build: () => {
           const box = el("div");
           box.appendChild(el("h2", { text: "오늘 어디서 막혔나" }));
@@ -4050,10 +4404,13 @@
     "국내·해외·암호화폐 모두 세금·수수료 등 실제 비용 구조가 바뀌면 설정을 함께 갱신해야 정확합니다.",
   ];
 
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 예전엔 소개 문단 아래로 기능
+  // 13개·제한사항 11개 목록이 그대로 이어져 첫 화면부터 계속 스크롤해야 했다.
+  // 첫 화면은 짧은 요약 카드만 두고, 두 목록은 탭으로 나눠 한 번에 하나만 보여준다.
   function renderAbout() {
     const panel = $('.panel[data-panel="about"]');
     panel.innerHTML = "";
-    panel.appendChild(el("h2", { text: "ℹ️ AutoDayTrading 소개" }));
+    panel.appendChild(_pcIconEl("h2", "info", "AutoDayTrading 소개"));
     panel.appendChild(el("div", { class: "card" }, [
       el("p", {
         text: "AutoDayTrading 은 국내주식·해외(미국)주식·암호화폐(빗썸) 세 시장에서 테마 종목을 자동으로 골라, "
@@ -4066,11 +4423,16 @@
       }),
     ]));
 
-    panel.appendChild(el("h3", { text: "기능", style: { marginTop: "var(--s4)" } }));
-    panel.appendChild(el("ul", {}, ABOUT_FEATURES.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))));
-
-    panel.appendChild(el("h3", { text: "⚠ 제약사항·주의사항", style: { marginTop: "var(--s4)" } }));
-    panel.appendChild(el("ul", {}, ABOUT_LIMITS.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))));
+    renderTabs(panel, "about", [
+      {
+        id: "features", label: `기능 (${ABOUT_FEATURES.length})`,
+        build: () => el("ul", {}, ABOUT_FEATURES.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))),
+      },
+      {
+        id: "limits", label: `제한사항·주의 (${ABOUT_LIMITS.length})`,
+        build: () => el("ul", {}, ABOUT_LIMITS.map((t) => el("li", { text: t, style: { marginBottom: "6px" } }))),
+      },
+    ]);
   }
 
   registerPanel("about", { onShow: renderAbout });
@@ -4092,7 +4454,7 @@
         const box = el("div");
         if (sec.lead) box.appendChild(el("div", { text: sec.lead }));
         const ul = el("ul");
-        (sec.items || []).forEach((it) => ul.appendChild(el("li", { html: `<b>${it.head}</b>: ${it.body}` })));
+        (sec.items || []).forEach((it) => ul.appendChild(el("li", { html: `<b>${esc(it.head)}</b>: ${esc(it.body)}` })));
         box.appendChild(ul);
         if (sec.table) {
           const gridBox = el("div");
@@ -4137,19 +4499,24 @@
     return frag;
   }
 
+  // ★★★ "최신 버전은 펼쳐서, 지난 버전은 접어서" - 예전엔 모든 버전이 카드로
+  // 나열돼 펼쳐진 채라 지난 버전을 찾으려면 한참 스크롤해야 했다. 버전마다
+  // details.acc 로 감싸 최신 것만 기본으로 열어 둔다.
   function renderReleaseNotes(data) {
     const panel = $('.panel[data-panel="release"]');
     panel.innerHTML = "";
-    panel.appendChild(el("h2", { text: "릴리즈 노트" }));
+    panel.appendChild(_pcIconEl("h2", "calendar", "릴리즈 노트"));
     const md = (data && data.markdown) || "";
     if (!md.trim()) {
       panel.appendChild(el("div", { class: "hint", text: "릴리즈 노트를 찾지 못했습니다." }));
       return;
     }
 
-    let card = null;
+    let body = null;
     let list = null;
     let item = null;
+    let firstDetails = null;
+    const olderDetails = [];  // ★ 최신 버전을 뺀 나머지 - scroll-box 하나에 몰아넣는다.
     const intro = [];
     md.split(/\r?\n/).forEach((raw) => {
       const line = raw.replace(/\s+$/, "");
@@ -4159,25 +4526,28 @@
         return;
       }
       if ((m = line.match(/^##\s+(.+)$/))) {
-        card = el("div", { class: "card", style: { marginBottom: "var(--s3)" } });
-        const head = el("h3", { text: m[1] });
+        const isFirst = !firstDetails;
+        const details = el("details", { class: "acc", open: isFirst });
+        const summary = el("summary", { text: m[1] });
         if (data.version && m[1].replace(/^v/i, "").trim() === data.version) {
-          head.appendChild(el("span", { class: "hint", text: "  ← 현재 버전" }));
+          summary.appendChild(el("span", { class: "acc-meta", text: "현재 버전" }));
         }
-        card.appendChild(head);
-        panel.appendChild(card);
+        details.appendChild(summary);
+        body = el("div", { class: "acc-body" });
+        details.appendChild(body);
+        if (isFirst) firstDetails = details; else olderDetails.push(details);
         list = null; item = null;
         return;
       }
       if (line.startsWith("# ")) return;
-      if (!card) { intro.push(line.trim()); return; }
+      if (!body) { intro.push(line.trim()); return; }
       if ((m = line.match(/^###\s+(.+)$/))) {
-        card.appendChild(el("b", { text: m[1], style: { display: "block", margin: "var(--s2) 0 4px" } }));
+        body.appendChild(el("b", { text: m[1], style: { display: "block", margin: "var(--s2) 0 4px" } }));
         list = null; item = null;
         return;
       }
       if ((m = line.match(/^-\s+(.*)$/))) {
-        if (!list) { list = el("ul", { style: { margin: "0 0 var(--s2) 1.2em", padding: 0 } }); card.appendChild(list); }
+        if (!list) { list = el("ul", { style: { margin: "0 0 var(--s2) 1.2em", padding: 0 } }); body.appendChild(list); }
         item = el("li", { style: { marginBottom: "6px" } });
         item.appendChild(_inlineNodes(m[1]));
         list.appendChild(item);
@@ -4188,12 +4558,22 @@
         item.appendChild(_inlineNodes(line.trim()));
         return;
       }
-      card.appendChild(el("div", { class: "hint" }, [_inlineNodes(line.trim())]));
+      body.appendChild(el("div", { class: "hint" }, [_inlineNodes(line.trim())]));
     });
     if (intro.length) {
-      const first = panel.querySelector(".card");
-      const p = el("div", { class: "hint", style: { marginBottom: "var(--s3)" } }, [_inlineNodes(intro.join(" "))]);
-      panel.insertBefore(p, first);
+      panel.appendChild(el("div", { class: "hint", style: { marginBottom: "var(--s3)" } }, [_inlineNodes(intro.join(" "))]));
+    }
+    if (firstDetails) panel.appendChild(firstDetails);
+    // ★★★ "최신은 펼치고 지난 것은 접어서" 만으로도 스크롤은 줄지만, 버전이 수십 개면
+    // 접힌 한 줄짜리 항목만 해도 페이지가 길어진다 - 지난 버전 전체를 scroll-box 하나에
+    // 몰아 페이지 자체 길이는 짧게, 옛 버전을 찾을 때만 그 상자 안에서 스크롤하게 한다.
+    if (olderDetails.length) {
+      const olderWrap = el("details", { class: "acc" });
+      olderWrap.appendChild(el("summary", { text: `지난 버전 (${olderDetails.length}개)` }));
+      const box = el("div", { class: "acc-body scroll-box" });
+      olderDetails.forEach((d) => box.appendChild(d));
+      olderWrap.appendChild(box);
+      panel.appendChild(olderWrap);
     }
   }
 
@@ -4212,14 +4592,14 @@
   function renderSetupStatus(setup) {
     return el("div", {
       class: "card",
-      html: `모드: <b>${MODE_LABELS[setup.mode] || setup.mode}</b> · 테마 ${setup.theme_count}개 · ` +
+      html: `모드: <b>${esc(MODE_LABELS[setup.mode] || setup.mode)}</b> · 테마 ${setup.theme_count}개 · ` +
         `종목 ${setup.symbol_count}개 · API 키: ${setup.has_keys ? "등록됨" : "없음"}`,
     });
   }
 
   function renderConnCheck(diag) {
     const wrap = el("div", { class: "card" });
-    wrap.appendChild(el("div", { html: `<b>접속 방식</b>: ${diag.mode_label || diag.mode || "-"}` }));
+    wrap.appendChild(el("div", { html: `<b>접속 방식</b>: ${esc(diag.mode_label || diag.mode || "-")}` }));
     const gridBox = el("div");
     new DataGrid(gridBox, {
       columns: [
@@ -4321,7 +4701,7 @@
     ]));
 
     const warnRow = el("div", { class: "banner warn" });
-    warnRow.appendChild(el("span", { text: "⚠️ client_secret 은 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요." }));
+    warnRow.appendChild(_pcIconEl("span", "alert", "client_secret 은 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요."));
     warnRow.appendChild(infoIcon(
       "이 프로그램은 두 값을 exe 옆 secrets.yaml 에 이 PC·이 Windows 계정에서만 풀 수 있게 암호화해 저장하고 "
       + "어디로도 전송하지 않습니다. 이 파일을 남에게 주거나 버전관리에 올리지 마세요."));
@@ -4387,7 +4767,7 @@
     // 눈으로 볼 방법이 없었다. 실제 응답을 그대로 보여준다.
     const diagBox = el("div");
     card.appendChild(el("button", {
-      class: "b ghost small", text: "🔬 종목선정 시세 진단",
+      class: "b ghost small", text: "종목선정 시세 진단",
       onclick: async () => {
         busy(diagBox, true);
         try {
@@ -4470,7 +4850,7 @@
     ]));
 
     const tgWarn = el("div", { class: "banner warn" });
-    tgWarn.appendChild(el("span", { text: "⚠️ 봇 토큰은 secrets.yaml 에 암호화되어 저장됩니다 - 그래도 토큰이 노출되면 폐기하세요." }));
+    tgWarn.appendChild(_pcIconEl("span", "alert", "봇 토큰은 secrets.yaml 에 암호화되어 저장됩니다 - 그래도 토큰이 노출되면 폐기하세요."));
     tgWarn.appendChild(infoIcon(
       "토큰이 노출되면 다른 사람이 이 봇으로 메시지를 보낼 수 있습니다.\n\n"
       + "노출됐다면 텔레그램에서 @BotFather 를 찾아 /revoke 명령으로 토큰을 폐기하고 "
@@ -4629,7 +5009,7 @@
     ]));
 
     const warnRow = el("div", { class: "banner warn" });
-    warnRow.appendChild(el("span", { text: "⚠️ Secret Key 는 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요." }));
+    warnRow.appendChild(_pcIconEl("span", "alert", "Secret Key 는 발급 화면을 닫으면 다시 볼 수 없습니다 - 먼저 적어 두세요."));
     warnRow.appendChild(infoIcon(
       "이 프로그램은 두 값을 exe 옆 secrets.yaml 에 이 PC·이 Windows 계정에서만 풀 수 있게 암호화해 저장하고 "
       + "어디로도 전송하지 않습니다. 이 파일을 남에게 주거나 버전관리에 올리지 마세요."));
@@ -4710,7 +5090,7 @@
     }));
     if (auth.is_default_password) {
       const warnRow = el("div", { class: "banner warn" });
-      warnRow.appendChild(el("span", { text: "⚠️ 아직 기본 비밀번호(123456)를 쓰고 있습니다 - 바깥에 열려 있다면 아무나 들어올 수 있습니다." }));
+      warnRow.appendChild(_pcIconEl("span", "alert", "아직 기본 비밀번호(123456)를 쓰고 있습니다 - 바깥에 열려 있다면 아무나 들어올 수 있습니다."));
       card.appendChild(warnRow);
     }
 
@@ -4769,7 +5149,7 @@
     const wrap = el("div");
     // ★★★ "설명 텍스트는 제목을 마우스 오버했을 때만" - 긴 안내를 본문에
     // 깔면 화면이 길어진다. 제목에 달아 두고 필요할 때만 보게 한다.
-    wrap.appendChild(titleWithHelp("🔌 외부 연동",
+    wrap.appendChild(titleWithHelp("외부 연동",
       "이 프로그램이 바깥과 주고받는 것은 세 가지뿐입니다 — 토스증권(국내주식 시세·주문), "
       + "텔레그램(알림), 빗썸(암호화폐 시세·주문).\n\n"
       + "전부 없어도 연습 모드는 인터넷 공개 시세로 정상 동작합니다."));
@@ -4823,34 +5203,45 @@
     return wrap;
   }
 
-  function _summaryBadge(ok, label) {
-    const color = ok === null ? "var(--rule2)" : ok ? "var(--rise)" : "var(--fall)";
-    const text = ok === null ? "-" : ok ? "✓" : "✗";
-    return `<span class="badge tech" style="cursor:default;background:${color};color:#fff;border-color:transparent;">${text} ${label}</span>`;
+  // ★ ok===null 이면 "아직 확인 전"(진단·사전 점검은 늦게 도착) - kpi-value 에
+  // 색을 안 주고 대시로 둔다. ok 는 rise/fall 색 관례(빨강=좋음/파랑=나쁨)를
+  // 그대로 따른다 - 이 화면 다른 곳(손익 등)과 색 의미가 어긋나지 않게 한다.
+  function _cfgKpiTone(ok) {
+    return ok === null ? "" : ok ? "rise" : "fall";
+  }
+
+  function _cfgKpiCard(iconName, label, ok, sub) {
+    const kpi = el("div", { class: "kpi" });
+    kpi.appendChild(_pcIconEl("div", iconName, label, { class: "kpi-label" }));
+    const tone = _cfgKpiTone(ok);
+    kpi.appendChild(el("div", { class: ("kpi-value " + tone).trim(), text: ok === null ? "-" : ok ? "연결됨" : "미연결" }));
+    if (sub) kpi.appendChild(el("div", { class: "kpi-sub", text: sub }));
+    return kpi;
   }
 
   function renderSetupOverview(setup, integrations, diag, pf) {
     // ★★ 아래에 "연계 테스트"(각 서비스 카드) · "연결 진단"(네트워크) ·
     // "사전 점검"(실거래 직전 체크)이 전부 계좌·인증 관련 항목을 조금씩
     // 겹쳐서 보여줘 혼란스럽다는 지적이 있었다 - 자세히 안 봐도 되게
-    // 맨 위에 한눈에 보기 요약을 두고, 나머지는 접어 둔다.
-    const card = el("div", { class: "card" });
-    card.appendChild(el("div", { style: { fontWeight: "600" }, text: "한눈에 보기" }));
-    const badges = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "var(--s2)", marginTop: "var(--s2)" } });
-    badges.innerHTML =
-      _summaryBadge(integrations.toss.configured, "토스증권") +
-      _summaryBadge(integrations.telegram.configured, "텔레그램") +
-      _summaryBadge(integrations.bithumb.configured, "빗썸") +
-      _summaryBadge(diag && diag.targets && diag.targets.length ? diag.targets.every((t) => t.ok) : null, "네트워크") +
-      _summaryBadge(pf ? pf.ok : null, "실거래 사전 점검");
-    card.appendChild(badges);
+    // 맨 위에 한눈에 보기 요약(kpi 카드)을 두고, 나머지는 탭·접힌 항목으로 미룬다.
+    const wrap = el("div");
+    wrap.appendChild(_pcIconEl("h2", "shield", "한눈에 보기"));
+    const netOk = diag && diag.targets && diag.targets.length ? diag.targets.every((t) => t.ok) : null;
+    const grid = el("div", { class: "kpi-grid" });
+    grid.appendChild(_cfgKpiCard("plug", "토스증권", integrations.toss.configured));
+    grid.appendChild(_cfgKpiCard("plug", "빗썸", integrations.bithumb.configured));
+    grid.appendChild(_cfgKpiCard("message", "텔레그램", integrations.telegram.configured));
+    grid.appendChild(_cfgKpiCard("flask", "Groq(AI 뉴스 필터)", !!(integrations.llm && integrations.llm.configured)));
+    grid.appendChild(_cfgKpiCard("wifi", "네트워크", netOk));
+    grid.appendChild(_cfgKpiCard("shield", "실거래 사전 점검", pf ? pf.ok : null));
+    wrap.appendChild(grid);
     const guideRow = el("div", { class: "hint", style: { marginTop: "var(--s2)" } });
     guideRow.appendChild(el("span", { text: "더 보기" }));
     guideRow.appendChild(infoIcon(
-      "자세한 내용은 아래 각 서비스 카드의 '연계 테스트'와, "
-      + "맨 아래 접힌 항목들(네트워크 연결 진단, 실거래 사전 점검)에서 볼 수 있습니다."));
-    card.appendChild(guideRow);
-    return card;
+      "자세한 내용은 [외부 연동] 탭의 '연계 테스트'와, "
+      + "[진단·점검] 탭의 네트워크 연결 진단·실거래 사전 점검에서 볼 수 있습니다."));
+    wrap.appendChild(guideRow);
+    return wrap;
   }
 
   function _accountHoldingsTable(rows, priceUnit) {
@@ -4884,7 +5275,7 @@
     // 화면을 열 때마다 자동으로 계좌를 조회하지 않고, 사용자가 명시적으로
     // "보기" 버튼을 눌러야만 실제 API 호출이 일어난다.
     const wrap = el("div");
-    wrap.appendChild(el("h2", { text: "💼 내 계좌 현황(토스, 조회 전용)" }));
+    wrap.appendChild(_pcIconEl("h2", "wallet", "내 계좌 현황(토스, 조회 전용)"));
 
     if (!setup.has_keys) {
       wrap.appendChild(el("div", { class: "hint", text: "토스 API 키를 등록하면 실제 보유 종목·현금 잔고를 여기서 볼 수 있습니다." }));
@@ -4900,7 +5291,7 @@
         body.innerHTML = "";
         // ★ 핵심만 한 줄로 두고 부연은 아이콘으로 - 스크롤을 줄인다.
         const w종목 = el("div", { class: "banner warn" });
-        w종목.appendChild(el("span", { text: "⚠️ 조회 전용 - 이 프로그램이 매매하지 않는 종목입니다" }));
+        w종목.appendChild(_pcIconEl("span", "alert", "조회 전용 - 이 프로그램이 매매하지 않는 종목입니다"));
         w종목.appendChild(infoIcon(
           "아래 목록은 실제 계좌의 보유 현황을 그대로 보여줄 뿐입니다.\n\n"
           + "이 프로그램은 자기가 직접 산 것만 팝니다 - 여기 있는 종목이 이 엔진이 산 것이 "
@@ -4940,14 +5331,14 @@
       });
     }
 
-    body.appendChild(el("button", { class: "b", text: "👁 계좌 현황 보기", onclick: load }));
+    body.appendChild(_pcIconEl("button", "eye", "계좌 현황 보기", { class: "b", onclick: load }));
     return wrap;
   }
 
   function renderCryptoAccountHoldings(integrations) {
     // ★★★ 토스와 마찬가지로 "보기" 버튼을 눌러야만 조회한다.
     const wrap = el("div");
-    wrap.appendChild(el("h2", { text: "🪙 내 암호화폐 계좌 현황(빗썸, 조회 전용)" }));
+    wrap.appendChild(_pcIconEl("h2", "wallet", "내 암호화폐 계좌 현황(빗썸, 조회 전용)"));
 
     const bithumbConfigured = integrations && integrations.bithumb && integrations.bithumb.configured;
     if (!bithumbConfigured) {
@@ -4964,7 +5355,7 @@
         body.innerHTML = "";
         // ★ 핵심만 한 줄로 두고 부연은 아이콘으로 - 스크롤을 줄인다.
         const w코인 = el("div", { class: "banner warn" });
-        w코인.appendChild(el("span", { text: "⚠️ 조회 전용 - 이 프로그램이 매매하지 않는 코인입니다" }));
+        w코인.appendChild(_pcIconEl("span", "alert", "조회 전용 - 이 프로그램이 매매하지 않는 코인입니다"));
         w코인.appendChild(infoIcon(
           "아래 목록은 실제 계좌의 보유 현황을 그대로 보여줄 뿐입니다.\n\n"
           + "이 프로그램은 자기가 직접 산 것만 팝니다 - 여기 있는 코인이 이 엔진이 산 것이 "
@@ -4987,7 +5378,7 @@
       });
     }
 
-    body.appendChild(el("button", { class: "b", text: "👁 암호화폐 계좌 현황 보기", onclick: load }));
+    body.appendChild(_pcIconEl("button", "eye", "암호화폐 계좌 현황 보기", { class: "b", onclick: load }));
     return wrap;
   }
 
@@ -5029,17 +5420,17 @@
       // 지금이 매매시간대인지, 네트워크가 실제로 뚫려있는지) 기준이라는 것이다.
       const connBody = el("div", {}, [el("div", { class: "hint", text: "확인 중…" })]);
       const pfBody = el("div", {}, [el("div", { class: "hint", text: "확인 중…" })]);
-      const connTitle = el("h2", { text: "🌐 네트워크 연결 진단" });
+      const connTitle = _pcIconEl("h2", "wifi", "네트워크 연결 진단");
       connTitle.appendChild(infoIcon(
         "위 연계 테스트가 'API 키가 맞는지'를 본다면, 이건 '인터넷 자체가 막혀있지 않은지'를 봅니다.\n\n"
         + "회사·학교 네트워크나 백신·방화벽이 막고 있으면 여기서 드러납니다."));
-      const tabDiag = el("div", {}, [connTitle, connBody, el("h2", { text: "🛡 실거래 사전 점검" }), pfBody]);
+      const tabDiag = el("div", {}, [connTitle, connBody, _pcIconEl("h2", "shield", "실거래 사전 점검"), pfBody]);
 
       renderTabs(panel, "setup", [
-        { id: "overview", label: "📋 한눈에", build: () => tabOverview },
-        { id: "keys", label: "🔌 외부 연동", build: () => tabKeys },
-        { id: "account", label: "💼 계좌 현황", build: () => tabAccount },
-        { id: "diag", label: "🩺 진단·점검", build: () => tabDiag },
+        { id: "overview", label: "한눈에", build: () => tabOverview },
+        { id: "keys", label: "외부 연동", build: () => tabKeys },
+        { id: "account", label: "계좌 현황", build: () => tabAccount },
+        { id: "diag", label: "진단·점검", build: () => tabDiag },
       ]);
 
       const failNote = (box, e) => { box.innerHTML = ""; box.appendChild(el("div", { class: "hint fall", text: "불러오지 못했습니다: " + e.message })); };
@@ -5061,6 +5452,28 @@
 
   // ━━ 테마 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  // ★ 테마·감시목록 한 줄을 코드가 아니라 "이름(코드)" 배지 한 칸으로 압축해서 보여준다
+  // (예전엔 <ul><li> 로 한 종목씩 줄바꿈해 종목 많은 테마는 한참 스크롤해야 했다).
+  function _themeChips(codes, names) {
+    const wrap = el("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } });
+    codes.forEach((c) => {
+      const label = names && names[c] ? `${names[c]} (${c})` : c;
+      wrap.appendChild(el("span", { class: "badge tech", style: { cursor: "default" }, text: label }));
+    });
+    return wrap;
+  }
+
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 테마가 많아지면 접힌 항목을 하나하나
+  // 열어 찾아야 했다. 검색창으로 테마명·종목명·코드를 걸러 안 맞는 항목은 감춘다.
+  function _themeFilterRow(onFilter) {
+    const wrap = el("div", { class: "field", style: { maxWidth: "360px" } });
+    const input = el("input", { type: "text", placeholder: "테마명·종목명·코드로 검색" });
+    input.addEventListener("input", () => onFilter(input.value.trim().toLowerCase()));
+    wrap.appendChild(_pcIconEl("label", "search", "검색"));
+    wrap.appendChild(input);
+    return wrap;
+  }
+
   function renderThemesPanel(data) {
     const panel = $('.panel[data-panel="themes"]');
     panel.innerHTML = "";
@@ -5071,18 +5484,27 @@
 
     const themes = data.themes || {};
     const names = data.names || {};
+    const groups = []; // ★ 검색 필터가 켜고 끌 { el, haystack } 들을 모아 둔다.
+
+    const listWrap = el("div", { class: "scroll-box" });
+    panel.appendChild(_themeFilterRow((q) => {
+      groups.forEach((g) => { g.el.style.display = !q || g.haystack.includes(q) ? "" : "none"; });
+    }));
+    panel.appendChild(listWrap);
+
     // ★ 종목코드만 나오던 문제 - 옆에 이름을 함께 보여준다(themes.yaml의
-    // 인라인 주석에서 뽑아온 이름, 없으면 코드 그대로).
+    // 인라인 주석에서 뽑아온 이름, 없으면 코드 그대로). 국내 테마는 기본으로
+    // 접어 두고(테마 수가 많을 수 있어서), 나머지 두 목록만 펼쳐 둔다.
     Object.entries(themes).forEach(([name, codes]) => {
-      const details = el("details");
-      details.appendChild(el("summary", { text: `${name} (${codes.length}종목)` }));
-      const ul = el("ul");
-      codes.forEach((c) => {
-        const label = names[c] ? `${names[c]} (${c})` : c;
-        ul.appendChild(el("li", { text: label }));
-      });
-      details.appendChild(ul);
-      panel.appendChild(details);
+      const details = el("details", { class: "acc" });
+      const summary = el("summary", { text: name });
+      summary.appendChild(el("span", { class: "acc-meta", text: `${codes.length}종목` }));
+      details.appendChild(summary);
+      const body = el("div", { class: "acc-body" }, [_themeChips(codes, names)]);
+      details.appendChild(body);
+      listWrap.appendChild(details);
+      const haystack = (name + " " + codes.map((c) => `${names[c] || ""} ${c}`).join(" ")).toLowerCase();
+      groups.push({ el: details, haystack });
     });
 
     // ★★ "해외주식·암호화폐 종목도 여기서 보여야 한다"는 요청 - 테마
@@ -5091,30 +5513,36 @@
     // 수정은 설정 화면에서 한다 - 여기서 또 만들면 두 군데를 손봐야 하는
     // 창구가 생긴다.
     const crypto = data.crypto_watchlist || [];
-    const cryptoDetails = el("details");
-    cryptoDetails.appendChild(el("summary", { text: `🪙 암호화폐 감시 목록 (${crypto.length}종목)` }));
-    const cryptoUl = el("ul");
+    const cryptoDetails = el("details", { class: "acc", open: true });
+    const cryptoSummary = _pcIconEl("summary", "wallet", "암호화폐 감시 목록");
+    cryptoSummary.appendChild(el("span", { class: "acc-meta", text: `${crypto.length}종목` }));
+    cryptoDetails.appendChild(cryptoSummary);
+    const cryptoBody = el("div", { class: "acc-body" });
     if (!crypto.length) {
-      cryptoUl.appendChild(el("li", { class: "hint", text: "등록된 종목이 없습니다." }));
+      cryptoBody.appendChild(el("div", { class: "hint", text: "등록된 종목이 없습니다." }));
     } else {
-      crypto.forEach((c) => cryptoUl.appendChild(el("li", { text: c })));
+      cryptoBody.appendChild(_themeChips(crypto));
     }
-    cryptoDetails.appendChild(cryptoUl);
-    cryptoDetails.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 암호화폐 섹션에서 합니다." }));
-    panel.appendChild(cryptoDetails);
+    cryptoBody.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 암호화폐 섹션에서 합니다." }));
+    cryptoDetails.appendChild(cryptoBody);
+    listWrap.appendChild(cryptoDetails);
+    groups.push({ el: cryptoDetails, haystack: ("암호화폐 감시 목록 " + crypto.join(" ")).toLowerCase() });
 
     const overseas = data.overseas_watchlist || [];
-    const overseasDetails = el("details");
-    overseasDetails.appendChild(el("summary", { text: `🌍 해외주식 관심 종목 (${overseas.length}종목)` }));
-    const overseasUl = el("ul");
+    const overseasDetails = el("details", { class: "acc", open: true });
+    const overseasSummary = _pcIconEl("summary", "globe", "해외주식 관심 종목");
+    overseasSummary.appendChild(el("span", { class: "acc-meta", text: `${overseas.length}종목` }));
+    overseasDetails.appendChild(overseasSummary);
+    const overseasBody = el("div", { class: "acc-body" });
     if (!overseas.length) {
-      overseasUl.appendChild(el("li", { class: "hint", text: "등록된 종목이 없습니다." }));
+      overseasBody.appendChild(el("div", { class: "hint", text: "등록된 종목이 없습니다." }));
     } else {
-      overseas.forEach((c) => overseasUl.appendChild(el("li", { text: c })));
+      overseasBody.appendChild(_themeChips(overseas));
     }
-    overseasDetails.appendChild(overseasUl);
-    overseasDetails.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 해외주식 섹션에서 합니다." }));
-    panel.appendChild(overseasDetails);
+    overseasBody.appendChild(el("div", { class: "hint", text: "추가·수정은 [설정] → 해외주식 섹션에서 합니다." }));
+    overseasDetails.appendChild(overseasBody);
+    listWrap.appendChild(overseasDetails);
+    groups.push({ el: overseasDetails, haystack: ("해외주식 관심 종목 " + overseas.join(" ")).toLowerCase() });
 
     const addForm = el("div", { class: "card" });
     addForm.appendChild(el("div", { html: "<b>국내주식 테마에 종목 추가</b>" }));
@@ -5154,6 +5582,56 @@
   let _configRaw = null;
 
   let _activeConfigGroup = null;  // ★ 모듈 스코프 - 저장 후 다시 그려도 보고 있던 탭이 안 바뀌게 유지한다.
+  const _cfgActiveSection = {};  // ★ 그룹명 -> 그 그룹 안에서 지금 보고 있는 섹션 제목(모듈 스코프, 위와 같은 이유).
+
+  function _cfgIsWide() {
+    return typeof window.matchMedia === "function" && window.matchMedia("(min-width:1024px)").matches;
+  }
+
+  // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 국내주식 그룹만 섹션(카드)이 7개라
+  // 예전엔 전부 펼쳐 쌓아 두고 칩으로 그 위치까지 스크롤만 시켜줬다(quicknav) - 카드
+  // 자체는 다 떠 있어서 스크롤 총량은 그대로였다. 이제 섹션 목록(데스크톱은 왼쪽 세로,
+  // 모바일은 위쪽 칩 줄) + 오른쪽/아래 폼 한 칸으로 나눠, 한 번에 섹션 하나만 그린다.
+  // 섹션이 하나뿐인 그룹(암호화폐·해외주식·스윙)은 목록 없이 바로 그 섹션만 보여준다.
+  function _cfgSectionShell(groupName, built) {
+    if (built.length <= 1) {
+      const only = el("div");
+      built.forEach(({ sectionEl }) => only.appendChild(sectionEl));
+      return only;
+    }
+    if (!_cfgActiveSection[groupName] || !built.some(({ section }) => section.title === _cfgActiveSection[groupName])) {
+      _cfgActiveSection[groupName] = built[0].section.title;
+    }
+    const wide = _cfgIsWide();
+    const nav = el("div", {
+      class: "chips",
+      style: wide ? { flexDirection: "column", alignItems: "stretch", minWidth: "180px", flex: "0 0 auto" } : {},
+    });
+    const pane = el("div", { style: { flex: "1", minWidth: "0" } });
+    // ★★★ 섹션을 전부 pane 에 심어 두고 display 로만 켜고 끈다(그룹 탭과 같은 패턴) -
+    // 안 보이는 섹션을 통째로 지웠다(innerHTML="") 되살리면, 그 사이 입력해 둔 값이
+    // 저장(collectConfig 는 DOM 에서 값을 읽는다) 시점에 화면에 없다는 이유로 조용히
+    // 원래 값으로 되돌아간다 - 실제로 겪을 뻔한 데이터 유실이라 반드시 display 로만 전환한다.
+    function showSection(title) {
+      _cfgActiveSection[groupName] = title;
+      built.forEach(({ section, sectionEl }) => { sectionEl.style.display = section.title === title ? "" : "none"; });
+      $$(".chip", nav).forEach((c) => c.classList.toggle("active", c.dataset.sectionTitle === title));
+    }
+    built.forEach(({ section, sectionEl }) => {
+      pane.appendChild(sectionEl);
+      const chip = el("button", {
+        type: "button", text: section.title, "data-section-title": section.title,
+        class: "chip" + (section.title === _cfgActiveSection[groupName] ? " active" : ""),
+        onclick: () => showSection(section.title),
+      });
+      nav.appendChild(chip);
+    });
+    showSection(_cfgActiveSection[groupName]);
+    const shell = el("div", { style: { display: "flex", gap: "var(--s3)", alignItems: "flex-start", flexDirection: wide ? "row" : "column" } });
+    shell.appendChild(nav);
+    shell.appendChild(pane);
+    return shell;
+  }
 
   function renderConfig(data) {
     const panel = $('.panel[data-panel="config"]');
@@ -5209,8 +5687,8 @@
     // 명확하다는 지적에 따라 바꿨다.
     const GROUP_ORDER = ["거래선택", "공통", "국내주식", "해외주식", "암호화폐", "스윙", "정보·알림", "시스템"];
     const GROUP_ICON = {
-      "거래선택": "🎯", "공통": "🔧", "국내주식": "🇰🇷", "해외주식": "🌍",
-      "암호화폐": "🪙", "스윙": "📈", "정보·알림": "🔔", "시스템": "💻",
+      "거래선택": "target", "공통": "sliders", "국내주식": "chart", "해외주식": "globe",
+      "암호화폐": "wallet", "스윙": "trending-up", "정보·알림": "bell", "시스템": "layers",
     };
     // ★★★ "설정에서 거래선택시 현재 매매중이 아닌 건 선택할 수 있어야 한다" - 예전엔
     // 그룹(탭) 전체를 하나의 시장에 묶어 잠갔다("거래선택" 탭 전체를 국내주식 거래 중이면
@@ -5285,7 +5763,7 @@
         // 덕분에 섹션까지는 스크롤 없이 바로 갈 수 있게 됐으니, 이제 그 안의 내용도 클릭 없이
         // 바로 보이게 기본으로 펼쳐 둔다(그래도 필요 없으면 접을 수 있게 <details> 는 유지).
         const det = el("details", { class: "auto-fields", open: true });
-        det.appendChild(el("summary", { text: `⚙ 자동 설정 ${autoFields.length}개 - 프로그램이 정한 값(기본값 권장, 필요할 때만 수정)` }));
+        det.appendChild(el("summary", { text: `자동 설정 ${autoFields.length}개 - 프로그램이 정한 값(기본값 권장, 필요할 때만 수정)` }));
         autoFields.forEach((f) => {
           const node = buildField(f, data.raw, techs);
           const lab = node.querySelector("label");
@@ -5332,68 +5810,28 @@
     const tabSeg = el("div", { class: "seg", style: { flexWrap: "wrap" } });
     const groupPanels = {};
     configGroups.forEach((groupName) => {
-      tabSeg.appendChild(el("button", {
-        text: `${GROUP_ICON[groupName] || ""} ${groupName}`.trim(), class: groupName === _activeConfigGroup ? "active" : "",
-        onclick: (e) => {
-          _activeConfigGroup = groupName;
-          $$("button", tabSeg).forEach((b) => b.classList.remove("active"));
-          e.target.classList.add("active");
-          Object.entries(groupPanels).forEach(([g, node]) => {
-            node.style.display = g === groupName ? "" : "none";
-          });
-        },
-      }));
+      const btn = _pcIconEl("button", GROUP_ICON[groupName], groupName, {
+        class: groupName === _activeConfigGroup ? "active" : "",
+      });
+      btn.addEventListener("click", () => {
+        _activeConfigGroup = groupName;
+        $$("button", tabSeg).forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        Object.entries(groupPanels).forEach(([g, node]) => {
+          node.style.display = g === groupName ? "" : "none";
+        });
+      });
+      tabSeg.appendChild(btn);
     });
 
+    // ★ 그룹(시장) 하나를 고르면 그 안의 섹션은 _cfgSectionShell() 이 목록 + 폼 한 칸으로
+    // 나눠 보여준다(위 주석 참고) - 예전처럼 섹션 카드를 전부 쌓아 두지 않는다.
     const scrollArea = el("div", { class: "config-scroll" });
     configGroups.forEach((groupName) => {
       const sections = byGroup[groupName];
       const groupPanel = el("div", { style: { display: groupName === _activeConfigGroup ? "" : "none" } });
-      const cols = el("div", { class: "cols" });
-      // ★★★ "설정에 모든 항목을 접었는데, 항목별 스크롤 해야하니 네비게이션이
-      // 불편해" - 섹션(카드)이 여러 개인 그룹(예: 국내주식의 동작 모드·위험
-      // 관리·거래 세션 등)은 원하는 카드를 찾으려면 위에서부터 쭉 스크롤해야
-      // 했다. 섹션 제목을 칩으로 늘어놓고 누르면 그 카드로 바로 이동하게 한다.
       const built = sections.map((section) => ({ section, sectionEl: renderSectionCard(section) }));
-      built.forEach(({ sectionEl }) => cols.appendChild(sectionEl));
-      if (built.length >= 3) {
-        const nav = el("div", { class: "config-quicknav" });
-        const chips = built.map(({ section, sectionEl }) => {
-          const chip = el("button", {
-            type: "button", class: "config-quicknav-chip", text: section.title,
-            onclick: () => {
-              // ★ .config-scroll 은 자체 overflow-y:auto 스크롤 박스이고(가로 탭
-              // 아래 내용만 스크롤되게 만든 구조), 이 칩 목록(nav)은 그 안에서
-              // position:sticky 로 위에 붙어 있다. scrollIntoView 를 그대로
-              // 쓰면 sticky 로 화면에 계속 떠 있는 nav 높이만큼 섹션 제목이
-              // 가려지므로, nav 높이를 뺀 위치를 직접 계산해서 이동한다.
-              const scrollRect = scrollArea.getBoundingClientRect();
-              const targetRect = sectionEl.getBoundingClientRect();
-              const navH = nav.offsetHeight || 0;
-              const target = scrollArea.scrollTop + (targetRect.top - scrollRect.top) - navH - 8;
-              scrollArea.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-            },
-          });
-          return { chip, sectionEl };
-        });
-        chips.forEach(({ chip }) => nav.appendChild(chip));
-        groupPanel.appendChild(nav);
-        // ★ 나이스투해브: 지금 스크롤로 보고 있는 섹션의 칩을 강조한다 -
-        // 어려우면 생략해도 되는 항목이라 간단한 형태로만 넣는다.
-        if (typeof IntersectionObserver === "function") {
-          const io = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-              if (!entry.isIntersecting) return;
-              const match = chips.find((c) => c.sectionEl === entry.target);
-              if (!match) return;
-              chips.forEach((c) => c.chip.classList.remove("active"));
-              match.chip.classList.add("active");
-            });
-          }, { root: scrollArea, rootMargin: "-10% 0px -70% 0px", threshold: 0 });
-          chips.forEach(({ sectionEl }) => io.observe(sectionEl));
-        }
-      }
-      groupPanel.appendChild(cols);
+      groupPanel.appendChild(_cfgSectionShell(groupName, built));
       groupPanels[groupName] = groupPanel;
       scrollArea.appendChild(groupPanel);
     });
@@ -5474,6 +5912,10 @@
 
   // ━━ 속보 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  function _newsIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+
   function renderNewsItem(it) {
     const row = el("div", { class: "card", style: { marginBottom: "var(--s2)", padding: "var(--s2) var(--s3)" } });
     const head = el("div", { style: { display: "flex", justifyContent: "space-between", gap: "var(--s2)" } });
@@ -5498,9 +5940,9 @@
     if (g.risk) body.appendChild(el("div", { class: "banner warn", text: `⚠ ${g.risk}` }));
     (g.top || []).forEach((it) => body.appendChild(renderNewsItem(it)));
     if (g.rest && g.rest.length) {
-      const more = el("details");
+      const more = el("details", { class: "acc" });
       more.appendChild(el("summary", { text: `더보기 (${g.rest.length}건)` }));
-      const moreBody = el("div");
+      const moreBody = el("div", { class: "acc-body" });
       g.rest.forEach((it) => moreBody.appendChild(renderNewsItem(it)));
       more.appendChild(moreBody);
       body.appendChild(more);
@@ -5518,35 +5960,57 @@
   async function renderNews() {
     const panel = $('.panel[data-panel="news"]');
     panel.innerHTML = "";
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: _newsIcon("newspaper") + " 속보" }));
+    const refreshBtn = el("button", {
+      class: "b ghost small", html: `${_newsIcon("refresh")} 새로고침`,
+      onclick: async () => {
+        try {
+          await api("/api/news/refresh", { method: "POST" });
+          toast("새로고침했습니다.");
+          renderNews();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      },
+    });
+    head.appendChild(refreshBtn);
+    panel.appendChild(head);
     panel.appendChild(skeleton(200));
     try {
       const data = await api("/api/news");
       panel.innerHTML = "";
+      panel.appendChild(head);
       panel.appendChild(el("div", {
         class: "banner",
         text: "매매 개입 방식: " + (NEWS_MODE_NOTE[data.mode] || data.mode),
       }));
-      panel.appendChild(el("button", {
-        class: "b ghost small", text: "새로고침",
-        onclick: async () => {
-          try {
-            await api("/api/news/refresh", { method: "POST" });
-            toast("새로고침했습니다.");
-            renderNews();
-          } catch (e) {
-            toast(e.message, "error");
-          }
-        },
-      }));
       if (!data.groups || !data.groups.length) {
-        panel.appendChild(el("div", { class: "hint", text: "표시할 속보가 없습니다." }));
+        panel.appendChild(el("div", { class: "hint empty", text: "표시할 속보가 없습니다." }));
         return;
       }
+      // ★★★ "스크롤 없이 첫 화면에서 가장 중요한 숫자가" - 그룹별 표(탭)를 보기 전에
+      // 전체 속보·위험 신호 그룹 수를 먼저 보여준다.
+      const total = data.groups.reduce((a, g) => a + (g.total || 0), 0);
+      const riskGroups = data.groups.filter((g) => g.risk).length;
+      const kGrid = el("div", { class: "kpi-grid" });
+      const kpi = (label, value, sub, cls) => {
+        const k = el("div", { class: "kpi" });
+        k.appendChild(el("div", { class: "kpi-label", text: label }));
+        k.appendChild(el("div", { class: "kpi-value " + (cls || ""), text: value }));
+        k.appendChild(el("div", { class: "kpi-sub", text: sub || " " }));
+        return k;
+      };
+      kGrid.appendChild(kpi("전체 속보", `${total}건`));
+      kGrid.appendChild(kpi("주제", `${data.groups.length}개`));
+      kGrid.appendChild(kpi("위험 신호", `${riskGroups}개 그룹`, "", riskGroups ? "fall" : ""));
+      panel.appendChild(kGrid);
       renderTabs(panel, "news", data.groups.map((g) => ({
         id: g.group, label: `${g.group} (${g.total})` + (g.risk ? " ⚠" : ""), build: () => renderNewsGroup(g),
       })));
     } catch (e) {
       panel.innerHTML = "";
+      panel.appendChild(head);
       panel.appendChild(el("div", { class: "banner danger", text: "속보를 불러오지 못했습니다: " + e.message }));
     }
   }
@@ -5565,13 +6029,20 @@
     "암호화폐": "비트코인 등 위험자산 심리의 참고 지표입니다.",
   };
 
-  function renderMarketCard(row) {
+  // ★★ 같은 원인(error_code)으로 여러 카드가 한꺼번에 실패하면(예: 네이버가
+  // 통째로 막힘) 카드마다 "조회 실패: ..."를 반복하는 대신 배너 하나로
+  // 묶는다 - suppressedCodes 에 들어있는 코드는 카드에서 메시지를 생략한다.
+  function renderMarketCard(row, suppressedCodes) {
     const card = el("div", { class: "card", style: { minWidth: "196px" } });
     const titleText = row.symbol ? `${row.label} (${row.symbol})` : row.label;
     card.appendChild(el("div", { style: { fontWeight: "600" }, text: titleText }));
 
     if (row.error) {
-      card.appendChild(el("div", { class: "hint", text: "조회 실패: " + row.error }));
+      const suppressed = suppressedCodes && row.error_code && suppressedCodes.has(row.error_code);
+      card.appendChild(el("div", {
+        class: "hint",
+        text: suppressed ? "-" : "조회 실패: " + row.error,
+      }));
       return card;
     }
 
@@ -5651,6 +6122,10 @@
   ];
   let _marketTab = "kr";
 
+  function _marketIcon(name) {
+    return (window.UI && window.UI.icon) ? window.UI.icon(name) : "";
+  }
+
   function renderMarket(data) {
     const panel = $('.panel[data-panel="market"]');
     // ★ 이 패널은 폴링마다 통째로 지우고 다시 그린다(카드 그리드가 조회
@@ -5658,6 +6133,9 @@
     const _scrollEl = _scrollAnchorEl();
     const _savedTop = _scrollEl.scrollTop;
     panel.innerHTML = "";
+    const head = el("div", { class: "page-head" });
+    head.appendChild(el("h1", { html: _marketIcon("globe") + " 시장" }));
+    panel.appendChild(head);
     // (data.note 는 긴 안내문이라 아래 기준 줄의 ⓘ 로 옮긴다)
 
     // ★★★ "일부 항목에 시간이 누락되어 있다" - 카드마다 각자 시각을
@@ -5709,10 +6187,28 @@
       body.innerHTML = "";
       const tab = tabs.find((t) => t.id === _marketTab);
       if (!tab) return;
+      // ★★ 같은 error_code 로 카드 여러 개가 한꺼번에 실패하면(예: 네이버
+      // 배치 자체가 막힘) 카드마다 같은 문구를 반복하지 않고 배너 하나로
+      // 묶는다 - 3개 이상이면 "많다"고 본다.
+      const rows = tab.groups.flatMap((g) => g.rows);
+      const byCode = {};
+      rows.forEach((r) => {
+        if (!r.error || !r.error_code) return;
+        const c = (byCode[r.error_code] = byCode[r.error_code] || { msg: r.error, n: 0 });
+        c.n += 1;
+      });
+      const suppressedCodes = new Set(Object.keys(byCode).filter((code) => byCode[code].n >= 3));
+      suppressedCodes.forEach((code) => {
+        const c = byCode[code];
+        body.appendChild(el("div", {
+          class: "banner warn",
+          text: `${c.msg} - ${c.n}건 조회 실패`,
+        }));
+      });
       tab.groups.forEach((g) => {
         // ★ 그룹이 탭으로 나뉘어 있어 그룹 제목은 뺀다(카드마다 이름이 있다).
         const grid = el("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(196px, 1fr))", gap: "var(--s2)", marginBottom: "var(--s3)" } });
-        g.rows.forEach((row) => grid.appendChild(renderMarketCard(row)));
+        g.rows.forEach((row) => grid.appendChild(renderMarketCard(row, suppressedCodes)));
         body.appendChild(grid);
       });
     };
@@ -5740,7 +6236,7 @@
       _scheduleMarketRefresh();
     });
     bar.appendChild(sel);
-    bar.appendChild(el("button", { class: "b ghost small", text: "지금 갱신", onclick: () => loadMarket(true) }));
+    bar.appendChild(el("button", { class: "b ghost small", html: `${_marketIcon("refresh")} 지금 갱신`, onclick: () => loadMarket(true) }));
     panel.appendChild(bar);
     panel.appendChild(body);
     paintBody();
@@ -5860,12 +6356,12 @@
     details.appendChild(el("summary", { html: `자체 최적화안 (${ideas.length}) <span class="hint">— 검증 안 됨</span>` }));
     ideas.forEach((idea) => {
       const card = el("div", { class: "card banner warn", style: { marginTop: "var(--s2)" } });
-      card.appendChild(el("div", { html: `<b>${idea.label}</b> <span class="hint">기반: ${idea.base}</span>` }));
+      card.appendChild(el("div", { html: `<b>${esc(idea.label)}</b> <span class="hint">기반: ${esc(idea.base)}</span>` }));
       card.appendChild(el("div", { text: idea.idea }));
-      card.appendChild(el("div", { html: `<b>왜 자체안인가</b>: ${idea.why}` }));
-      card.appendChild(el("div", { html: `<b>기대</b>: ${idea.expect}` }));
-      card.appendChild(el("div", { html: `<b>확인 방법</b>: ${idea.check}` }));
-      card.appendChild(el("div", { html: `<b>${idea.status}</b>` }));
+      card.appendChild(el("div", { html: `<b>왜 자체안인가</b>: ${esc(idea.why)}` }));
+      card.appendChild(el("div", { html: `<b>기대</b>: ${esc(idea.expect)}` }));
+      card.appendChild(el("div", { html: `<b>확인 방법</b>: ${esc(idea.check)}` }));
+      card.appendChild(el("div", { html: `<b>${esc(idea.status)}</b>` }));
       details.appendChild(card);
     });
     return details;
@@ -5883,7 +6379,7 @@
       // ★ ISO 문자열 그대로("2026-09-09T15:00:00.123456+09:00")는 읽기
       //   어렵다 - 날짜와 시:분:초로 나눠 보여준다.
       const when = String(e.at || "").replace("T", " ").slice(0, 19);
-      row.appendChild(el("div", { html: `<b>${e.action === "apply" ? "반영" : "되돌림"}</b> ${when} (${e.month})` }));
+      row.appendChild(el("div", { html: `<b>${e.action === "apply" ? "반영" : "되돌림"}</b> ${esc(when)} (${esc(e.month)})` }));
       (e.changes || []).forEach((c) => row.appendChild(el("div", { text: `${c.label}: ${JSON.stringify(c.before)} → ${JSON.stringify(c.after)}` })));
       if (e.action === "apply") {
         row.appendChild(el("button", {
@@ -5950,18 +6446,23 @@
       panel.appendChild(renderReviewSummary(data.stats));
       if (data.note) panel.appendChild(el("div", { class: "banner warn", text: data.note }));
 
-      panel.appendChild(renderAngleTable("기법별", data.stats.by_technique, 12));
-      panel.appendChild(renderAngleTable("청산사유별", data.stats.by_reason, 12));
-      panel.appendChild(renderAngleTable("시간대별", data.stats.by_slot, 8));
-      panel.appendChild(renderAngleTable("테마별", data.stats.by_theme, 12));
-      panel.appendChild(renderAngleTable("요일별", data.stats.by_weekday, 12));
+      // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 예전엔 요약 아래로 각도별
+      // 분석 표 5개 · 제안 카드 · 자체안 · 반영 이력 · 암호화폐/스윙 요약까지 한
+      // 화면에 전부 이어 붙어 있었다. 세 묶음으로 나눠 탭 하나만 보이게 한다
+      // (renderTabs 는 첫 화면부터 항상 있던 공용 헬퍼다).
+      const breakdownBox = el("div");
+      breakdownBox.appendChild(renderAngleTable("기법별", data.stats.by_technique, 12));
+      breakdownBox.appendChild(renderAngleTable("청산사유별", data.stats.by_reason, 12));
+      breakdownBox.appendChild(renderAngleTable("시간대별", data.stats.by_slot, 8));
+      breakdownBox.appendChild(renderAngleTable("테마별", data.stats.by_theme, 12));
+      breakdownBox.appendChild(renderAngleTable("요일별", data.stats.by_weekday, 12));
 
-      panel.appendChild(el("h2", { text: "제안" }));
+      const proposalsBox = el("div");
       if (!data.proposals.length) {
-        panel.appendChild(el("div", { class: "hint", text: "지금은 제안할 것이 없습니다." }));
+        proposalsBox.appendChild(el("div", { class: "hint", text: "지금은 제안할 것이 없습니다." }));
       } else {
         const { box, checks } = renderProposals(data.proposals);
-        panel.appendChild(box);
+        proposalsBox.appendChild(box);
 
         const applyBar = el("div", { class: "card" });
         const noteInput = el("input", { type: "text", placeholder: "메모(선택)" });
@@ -5984,13 +6485,13 @@
             }
           },
         }));
-        panel.appendChild(applyBar);
+        proposalsBox.appendChild(applyBar);
       }
+      proposalsBox.appendChild(renderIdeas(data.ideas));
 
-      panel.appendChild(renderIdeas(data.ideas));
-
+      const histBox = el("div");
       const histData = await api("/api/review/history");
-      panel.appendChild(renderReviewHistory((histData.entries || []).filter((e) => e.month === month)));
+      histBox.appendChild(renderReviewHistory((histData.entries || []).filter((e) => e.month === month)));
 
       // ★ 암호화폐는 review.py(최적화 제안 9종 등 국내주식 전용 로직)를 거치지
       // 않는다 - 완전히 다른 파일(crypto_state.json)에서 그 달 것만 걸러
@@ -6012,7 +6513,7 @@
             html: `거래 ${monthRows.length}건 · 승률 ${pct0(wins / monthRows.length)} · 손익 `
               + `<span class="${dir(totalPnl)}">${signed(totalPnl, "won")}</span>`,
           }));
-          panel.appendChild(box);
+          histBox.appendChild(box);
         }
       } catch (e) {
         /* 조용히 건너뛴다 - 국내주식 리뷰는 이미 다 보여줬다. */
@@ -6037,11 +6538,17 @@
             html: `거래 ${monthRows.length}건 · 승률 ${pct0(wins / monthRows.length)} · 손익 `
               + `<span class="${dir(totalPnl)}">${signed(totalPnl, "won")}</span>`,
           }));
-          panel.appendChild(box);
+          histBox.appendChild(box);
         }
       } catch (e) {
         /* 조용히 건너뛴다. */
       }
+
+      renderTabs(panel, "review", [
+        { id: "breakdown", label: "각도별 분석", build: () => breakdownBox },
+        { id: "proposals", label: `제안 (${data.proposals.length})`, build: () => proposalsBox },
+        { id: "history", label: "반영 이력", build: () => histBox },
+      ]);
     } catch (e) {
       panel.innerHTML = "";
       toast(e.message, "error");
@@ -6057,7 +6564,7 @@
   function renderLabParticipantCard(p) {
     const card = el("div", { class: "card" });
     const head = el("div", { style: { display: "flex", justifyContent: "space-between" } });
-    head.appendChild(el("span", { html: `<b>${p.name}</b>` }));
+    head.appendChild(el("span", { html: `<b>${esc(p.name)}</b>` }));
     head.appendChild(el("span", {
       class: "badge tech",
       style: { cursor: "default", background: p.real ? "var(--rise)" : "var(--card)", color: p.real ? "#fff" : "var(--ink)" },
@@ -6084,7 +6591,7 @@
   // (daytrader/technique_backtest.py·technique_prefs.py·playbook.py 참고). ━━━━━━━━━━━━━━━━
   function renderTechniqueBacktestCard() {
     const card = el("div", { class: "card" });
-    const title = el("h2", { text: "🔬 종목별 매매기법 백테스트" });
+    const title = _pcIconEl("h2", "flask", "종목별 매매기법 백테스트");
     title.appendChild(infoIcon(
       "오늘 선정된 테마 종목에 최근 실제 시세(1분봉)를 기법별로 독립 재생해, 이 종목에서 어느 "
       + "기법이 더 잘 맞았는지 순위를 매깁니다.\n\n"
@@ -6198,7 +6705,7 @@
   // 모두 최신순으로 보여준다.
   async function renderTechniqueBacktestHistoryCard() {
     const card = el("div", { class: "card" });
-    card.appendChild(el("h2", { text: "🗂 최근 실행 기록" }));
+    card.appendChild(_pcIconEl("h2", "layers", "최근 실행 기록"));
     card.appendChild(el("div", {
       class: "hint",
       text: "종목이 새로 선정될 때마다 자동으로도 실행됩니다(하루 한 번, 같은 종목 조합이면 다시 돌지 않음) - 위에서 직접 실행할 수도 있습니다.",
@@ -6253,34 +6760,42 @@
     const _savedTop = _scrollEl.scrollTop;
     try {
     panel.innerHTML = "";
-    const labWarn = el("div", { class: "banner warn" });
-    labWarn.appendChild(el("span", { text: "🧪 실험실 참가자는 전부 가상 체결입니다 - 실제 주문은 나가지 않습니다." }));
-    labWarn.appendChild(infoIcon(
-      "실제 주문을 내는 엔진은 언제나 하나뿐입니다.\n\n"
-      + "실험실에서 여러 설정을 동시에 돌려도 모두 가상 체결이며, "
-      + "지금 돌고 있는 실거래 엔진에는 절대 주문을 내지 않습니다.\n\n"
-      + "여기서 좋은 결과가 나온 설정을 실제로 쓰려면 [설정] 화면에서 직접 바꿔야 합니다."));
-    panel.appendChild(labWarn);
-    panel.appendChild(renderTechniqueBacktestCard());
-    panel.appendChild(await renderTechniqueBacktestHistoryCard());
+
+    // ★★★ "심플&모던, 스크롤 많은 네비게이션 지양" - 종목별 기법 백테스트(실행+기록)와
+    // 가상 실험(설정 비교)은 서로 다른 용도라 늘 함께 볼 필요가 없다 - 탭으로 나눠
+    // 한 번에 하나만 보여준다(renderTabs 는 다른 패널에서도 쓰는 공용 헬퍼).
+    const backtestBox = el("div");
+    backtestBox.appendChild(renderTechniqueBacktestCard());
+    backtestBox.appendChild(await renderTechniqueBacktestHistoryCard());
 
     let data;
     try {
       data = await api("/api/lab");
     } catch (e) {
       toast(e.message, "error");
+      renderTabs(panel, "lab", [{ id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox }]);
       return;
     }
 
+    const expBox = el("div");
+    const labWarn = el("div", { class: "banner warn" });
+    labWarn.appendChild(_pcIconEl("span", "flask", "실험실 참가자는 전부 가상 체결입니다 - 실제 주문은 나가지 않습니다."));
+    labWarn.appendChild(infoIcon(
+      "실제 주문을 내는 엔진은 언제나 하나뿐입니다.\n\n"
+      + "실험실에서 여러 설정을 동시에 돌려도 모두 가상 체결이며, "
+      + "지금 돌고 있는 실거래 엔진에는 절대 주문을 내지 않습니다.\n\n"
+      + "여기서 좋은 결과가 나온 설정을 실제로 쓰려면 [설정] 화면에서 직접 바꿔야 합니다."));
+    expBox.appendChild(labWarn);
+
     if (data.running) {
       if (data.spec) {
-        panel.appendChild(el("div", { class: "hint", text: `실행 중: ${data.spec.kind === "shadow" ? "섀도 비교" : "대조 실험"} · 시드 ${data.spec.seed}` }));
-        panel.appendChild(el("div", { class: "hint", text: data.spec.fairness }));
+        expBox.appendChild(el("div", { class: "hint", text: `실행 중: ${data.spec.kind === "shadow" ? "섀도 비교" : "대조 실험"} · 시드 ${data.spec.seed}` }));
+        expBox.appendChild(el("div", { class: "hint", text: data.spec.fairness }));
       }
       const grid = el("div", { class: "cols" });
       data.participants.forEach((p) => grid.appendChild(renderLabParticipantCard(p)));
-      panel.appendChild(grid);
-      panel.appendChild(el("button", {
+      expBox.appendChild(grid);
+      expBox.appendChild(el("button", {
         class: "b quiet-danger", text: "실험 중지(가상만)",
         onclick: async () => {
           await api("/api/lab/stop", { method: "POST" });
@@ -6288,6 +6803,10 @@
           loadLab();
         },
       }));
+      renderTabs(panel, "lab", [
+        { id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox },
+        { id: "experiment", label: "가상 실험(실행 중)", build: () => expBox },
+      ]);
       if (!_labTimer) {
         _labTimer = setInterval(() => {
           if (_activeTabIs("lab")) loadLab();
@@ -6300,7 +6819,7 @@
       _labTimer = null;
     }
 
-    panel.appendChild(el("div", { class: "hint", text: data.how }));
+    expBox.appendChild(el("div", { class: "hint", text: data.how }));
 
     const presetBox = el("div", { class: "cols" });
     const checks = [];
@@ -6313,14 +6832,14 @@
       label.appendChild(el("div", { class: "hint", text: p.note }));
       presetBox.appendChild(label);
     });
-    panel.appendChild(presetBox);
+    expBox.appendChild(presetBox);
 
     const speedSel = el("select");
     [60, 600, 3600].forEach((s) => speedSel.appendChild(el("option", { value: String(s), text: `${s}배속` })));
     speedSel.value = "600";
-    panel.appendChild(speedSel);
+    expBox.appendChild(speedSel);
 
-    panel.appendChild(el("button", {
+    expBox.appendChild(el("button", {
       class: "b", text: "실험 시작",
       onclick: async () => {
         const chosen = checks.filter((cb) => cb.checked).map((cb) => cb.value);
@@ -6349,8 +6868,8 @@
     try {
       const result = await api("/api/lab/result");
       if (result.participants && result.participants.length) {
-        panel.appendChild(el("h2", { text: "지난 결과" }));
-        panel.appendChild(el("div", { class: "banner", text: result.verdict }));
+        expBox.appendChild(el("h2", { text: "지난 결과" }));
+        expBox.appendChild(el("div", { class: "banner", text: result.verdict }));
         const gridBox = el("div");
         new DataGrid(gridBox, {
           columns: [
@@ -6364,12 +6883,17 @@
           ],
           rows: result.participants, page: 0, storageKey: "grid.lab.result",
         });
-        panel.appendChild(gridBox);
-        (result.caution || []).forEach((c) => panel.appendChild(el("div", { class: "hint", text: "· " + c })));
+        expBox.appendChild(gridBox);
+        (result.caution || []).forEach((c) => expBox.appendChild(el("div", { class: "hint", text: "· " + c })));
       }
     } catch (e) {
       /* 지난 결과가 없으면 조용히 넘어간다. */
     }
+
+    renderTabs(panel, "lab", [
+      { id: "backtest", label: "종목별 기법 백테스트", build: () => backtestBox },
+      { id: "experiment", label: "가상 실험", build: () => expBox },
+    ]);
     } finally {
       _restoreScrollAfter(_savedTop, _scrollEl);
     }
@@ -6664,7 +7188,10 @@
     const btn = $("#theme-toggle");
     if (btn) {
       const isDark = mode === "dark" || (!mode && window.matchMedia("(prefers-color-scheme: dark)").matches);
-      btn.textContent = isDark ? "☀️" : "🌙";
+      // ★ 이모지(🌙/☀️) 대신 UI.icon() 선 아이콘 - 재디자인 지침대로
+      // 아이콘 세트를 하나로 통일한다.
+      btn.innerHTML = icon(isDark ? "sun" : "moon", 17);
+      btn.setAttribute("aria-label", isDark ? "밝은 화면으로 전환" : "어두운 화면으로 전환");
     }
   }
 

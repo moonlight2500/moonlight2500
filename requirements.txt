@@ -1,14 +1,20 @@
-requests>=2.31       # HTTP 통신 - 거래소/시세 API 호출
-PyYAML>=6.0          # config.yaml 기본 읽기
-ruamel.yaml>=0.17    # 주석을 보존한 채 config.yaml 을 다시 쓸 때 사용 (설정 화면 저장 시)
-truststore>=0.9      # 사내 프록시 인증서 문제 해결
-fastapi>=0.110       # 웹 API 서버 프레임워크
-uvicorn>=0.27        # fastapi 실행용 ASGI 서버
-openpyxl>=3.1        # 엑셀(.xlsx) 매매 기록 내보내기
-pystray>=0.19        # 시스템 트레이 아이콘
-Pillow>=10.0         # 트레이 아이콘 이미지 처리
-PyJWT>=2.7           # 빗썸 Open API 2.0 인증(JWT) 토큰 생성
-tzdata>=2024.1       # ★ Windows 는 시스템에 IANA 시간대 DB가 없어 zoneinfo("America/New_York")가
-                     #   "No time zone found" 로 실패한다(실제로 겪은 문제) - 이 패키지가 데이터를 대신 제공한다.
+# ★ [5-2] ">=" 로만 적어 두면 pip 가 그때그때 가장 최신 버전을 설치해, 개발 중
+# 검증한 조합과 실제 설치되는 조합이 달라질 수 있다(실제로 최신 starlette 조합에서
+# tests/test_market_priority.py 가 깨지는 문제를 겪었다). 지금 이 조합으로 전체
+# 테스트가 통과하는 걸 확인했으니 그 버전으로 고정한다(pip freeze 기준).
+# 테스트에만 필요한 패키지(httpx2·playwright)는 requirements-dev.txt 로 옮겼다.
+requests==2.34.2       # HTTP 통신 - 거래소/시세 API 호출
+PyYAML==6.0.3          # config.yaml 기본 읽기
+ruamel.yaml==0.19.1    # 주석을 보존한 채 config.yaml 을 다시 쓸 때 사용 (설정 화면 저장 시)
+truststore==0.10.4     # 사내 프록시 인증서 문제 해결
+fastapi==0.141.1       # 웹 API 서버 프레임워크
+uvicorn==0.53.0        # fastapi 실행용 ASGI 서버
+openpyxl==3.1.5        # 엑셀(.xlsx) 매매 기록 내보내기
+pystray==0.19.5        # 시스템 트레이 아이콘
+Pillow==12.3.0         # 트레이 아이콘 이미지 처리
+PyJWT==2.15.0          # 빗썸 Open API 2.0 인증(JWT) 토큰 생성
+defusedxml==0.7.1      # 뉴스 RSS·네이버 시세 XML 을 안전하게 파싱(엔티티 확장 공격 차단)
+tzdata==2026.4         # ★ Windows 는 시스템에 IANA 시간대 DB가 없어 zoneinfo("America/New_York")가
+                       #   "No time zone found" 로 실패한다(실제로 겪은 문제) - 이 패키지가 데이터를 대신 제공한다.
 
 # yfinance>=0.2.40    # 예비 시세 소스. 기본은 꺼둔다 (STAGE 미정 - 필요해지면 주석 해제)

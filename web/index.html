@@ -46,42 +46,72 @@
 </div>
 
 <div id="app-root" style="display:none">
-<!-- ★★ 밴드와 내비는 한 상자로 감싼다. 따로 두고 각자 sticky 를 주면
-     둘 다 top:0 이라 겹치고, 밴드 z-index 가 높아 내비가 그 뒤로 밀려
-     스크롤하면 사라진다. 높이를 재서 top 을 맞추는 방식도 쓰지 않는다 -
-     밴드 높이는 상태 문구와 창 너비에 따라 계속 달라진다. -->
-<div class="stickytop">
-  <header class="band" id="band" data-state="idle">
-    <span class="band-title" id="band-title">연결 중...</span>
-    <span class="band-meta">
-      <button id="currency-toggle" type="button" title="해외주식 금액 표시 통화 전환" aria-label="해외주식 금액 표시 통화 전환" style="display:none">$</button>
-      <button id="theme-toggle" type="button" title="화면 밝기 전환" aria-label="화면 밝기 전환">🌙</button>
-      <span id="conn-indicator" data-mode="connecting" title="프로그램 연결 중">⏳</span>
-      <span id="app-version" class="hint" style="display:none"></span>
+<!-- ★★★ 내비게이션 재설계 - "많은 스크롤로 보기 불편한 네비게이션 지양"
+     요청에 따라, 예전의 "그룹 탭 + 하위 탭" 두 줄 구조를 데스크톱/태블릿
+     에서는 왼쪽 사이드바(16개 화면을 전부 펼쳐 두어 어디든 한 번에)로,
+     모바일에서는 하단 고정 탭바(그룹 4개) + 그 위 가로로 미는 하위 탭
+     칩 한 줄로 바꾼다. .sub-nav/.group-nav/#band 같은 기존 클래스·id 는
+     app.js 의 다른 코드가 그대로 참조하므로 이름은 그대로 두고 배치만
+     새로 짠다(app.js 의 renderSidebarNav 등이 내용을 채운다). -->
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar" aria-label="주 메뉴">
+    <div class="sidebar-head">
+      <button type="button" class="sidebar-collapse" id="sidebar-collapse"
+              title="메뉴 접기/펼치기" aria-label="메뉴 접기/펼치기" aria-expanded="true"></button>
+      <div class="sidebar-brand">
+        <span class="sidebar-brand-logo" aria-hidden="true"></span>
+        <span class="sidebar-brand-name">AutoDayTrading</span>
+      </div>
+    </div>
+    <span class="sidebar-mode-badge" id="sidebar-mode-badge" data-state="idle">
+      <span class="sidebar-mode-badge-label">대기</span>
     </span>
-  </header>
-  <nav class="group-nav"></nav>
-  <nav class="sub-nav"></nav>
-</div>
+    <nav class="sidebar-nav" id="sidebar-nav" aria-label="화면 목록"></nav>
+  </aside>
 
-<main>
-  <section class="panel" data-panel="dash"></section>
-  <section class="panel" data-panel="selection"></section>
-  <section class="panel" data-panel="news"></section>
-  <section class="panel" data-panel="market"></section>
-  <section class="panel" data-panel="perf"></section>
-  <section class="panel" data-panel="journal"></section>
-  <section class="panel" data-panel="marketreview"></section>
-  <section class="panel" data-panel="about"></section>
-  <section class="panel" data-panel="review"></section>
-  <section class="panel" data-panel="lab"></section>
-  <section class="panel" data-panel="playbook"></section>
-  <section class="panel" data-panel="rules"></section>
-  <section class="panel" data-panel="release"></section>
-  <section class="panel" data-panel="setup"></section>
-  <section class="panel" data-panel="themes"></section>
-  <section class="panel" data-panel="config"></section>
-</main>
+  <div class="main-col">
+    <!-- ★★ 상단바와 하위 탭 칩을 한 상자로 감싼다 - 따로 두고 각자
+         sticky 를 주면 겹치는 문제가 생긴다(예전 밴드+메뉴 버그와 같은
+         이유). -->
+    <div class="stickytop">
+      <header class="topbar">
+        <h1 class="topbar-title" id="topbar-title">대시보드</h1>
+        <div class="topbar-actions">
+          <span class="band" id="band" data-state="idle">
+            <span class="band-title" id="band-title">연결 중...</span>
+          </span>
+          <button id="currency-toggle" type="button" title="해외주식 금액 표시 통화 전환" aria-label="해외주식 금액 표시 통화 전환" style="display:none">$</button>
+          <button id="theme-toggle" type="button" title="화면 밝기 전환" aria-label="화면 밝기 전환"></button>
+          <span id="conn-indicator" data-mode="connecting" title="프로그램 연결 중"></span>
+          <span id="app-version" class="hint" style="display:none"></span>
+        </div>
+      </header>
+      <nav class="sub-nav" id="sub-nav" aria-label="현재 그룹의 화면"></nav>
+    </div>
+
+    <main>
+      <section class="panel" data-panel="dash"></section>
+      <section class="panel" data-panel="selection"></section>
+      <section class="panel" data-panel="news"></section>
+      <section class="panel" data-panel="market"></section>
+      <section class="panel" data-panel="perf"></section>
+      <section class="panel" data-panel="journal"></section>
+      <section class="panel" data-panel="marketreview"></section>
+      <section class="panel" data-panel="about"></section>
+      <section class="panel" data-panel="review"></section>
+      <section class="panel" data-panel="lab"></section>
+      <section class="panel" data-panel="playbook"></section>
+      <section class="panel" data-panel="rules"></section>
+      <section class="panel" data-panel="release"></section>
+      <section class="panel" data-panel="setup"></section>
+      <section class="panel" data-panel="themes"></section>
+      <section class="panel" data-panel="config"></section>
+    </main>
+
+    <!-- 모바일 전용 하단 탭바(그룹 4개) - 768px 이상에서는 CSS 가 숨긴다. -->
+    <nav class="group-nav" id="group-nav" aria-label="주 메뉴"></nav>
+  </div>
+</div>
 </div>
 
 <!-- 순서 고정: ui.js → chart.js → forms.js → app.js.

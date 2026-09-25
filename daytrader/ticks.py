@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from math import inf
+from math import ceil, inf
 
 # 2023-01-25 개정 KRX 호가단위표
 TICK_TABLE = [
@@ -30,7 +30,14 @@ def round_to_tick(price: float, mode: str = "nearest") -> int:
     for _ in range(3):
         unit = tick_size(p)
         if mode == "up":
-            p = ((int(p) + unit - 1) // unit) * unit
+            # ★★★ 실제로 겪은 버그 - int(p) 로 소수점을 먼저 버린 뒤 올림 공식을
+            # 적용해서, round_to_tick(13540.5, "up") 이 13550이 아니라 13540을
+            # 돌려줬다(이미 호가단위에 딱 맞는 값처럼 취급됨 - 매수 슬리피지
+            # 계산에 그대로 쓰이는 값이라 실제 주문가가 틀어진다). 소수점을
+            # 버리지 않고 그대로 나눠 올림(ceil)한다. 부동소수점 오차로
+            # 13540.000000000002 같은 값이 13550으로 밀려 올라가지 않도록
+            # 아주 작은 허용오차(1e-9)를 미리 뺀다.
+            p = ceil(p / unit - 1e-9) * unit
         elif mode == "down":
             p = (int(p) // unit) * unit
         else:

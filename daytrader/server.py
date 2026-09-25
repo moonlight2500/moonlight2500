@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import re
+import shutil
 import threading
 import time
 from dataclasses import asdict
@@ -15,7 +16,7 @@ from functools import wraps
 from logging.handlers import RotatingFileHandler
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from ruamel.yaml import YAML
@@ -23,7 +24,7 @@ from ruamel.yaml.scalarfloat import ScalarFloat
 from ruamel.yaml.scalarint import ScalarInt
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
-from daytrader.config import load_config
+from daytrader.config import KNOWN_TOP_LEVEL_KEYS, load_config
 from daytrader.paths import app_dir, app_path, ensure_user_files, web_dir
 from daytrader.playbook import Playbook
 from daytrader.runner import EngineRunner, EventBus, LogBuffer
@@ -157,6 +158,12 @@ def api_guard(fn):
                 return await fn(*args, **kwargs)
             except HTTPException:
                 raise
+            except ConfirmRequired:
+                # ★ [2-4] 라우트 dependencies=[...] 가 아니라 함수 본문에서 조건부로
+                # _require_confirm(...)(request) 를 직접 부르는 라우트(예: 호출자가 새
+                # 값을 넣었을 때만 재확인을 요구하는 /api/notify/test)가 있다 - 그대로
+                # 삼켜 500 으로 바꾸면 안 되고, 원래의 403 재확인 응답이 나가야 한다.
+                raise
             except TossApiError as exc:
                 raise HTTPException(status_code=502, detail=_redact(exc))
             except (FileNotFoundError, ValueError) as exc:
@@ -170,6 +177,8 @@ def api_guard(fn):
         try:
             return fn(*args, **kwargs)
         except HTTPException:
+            raise
+        except ConfirmRequired:
             raise
         except TossApiError as exc:
             raise HTTPException(status_code=502, detail=_redact(exc))
@@ -215,9 +224,37 @@ _AUTH_EXEMPT_PREFIXES = ("/api/login/pending/", "/api/admin/")
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
+def _generate_default_password() -> str:
+    """★★★ 실제로 겪은 문제 - 예전엔 secrets.yaml 에 비밀번호가 없으면 하드코딩된
+    "123456"으로 그냥 로그인이 됐다(새로 설치하면 누구나 아는 비밀번호로 열려 있는 셈).
+    이제는 최초 실행 때 무작위 6자리를 지어 저장하고, 콘솔·로그에 한 번 보여 준다.
+    이 임시 비밀번호로 바꾸기 전까지는 원격에서 로그인을 아예 막는다(아래 login() 참고)."""
+    import secrets as pysecrets
+    from daytrader import secrets
+    pw = f"{pysecrets.randbelow(1_000_000):06d}"
+    secrets.save({"auth_password": pw, "auth_password_is_default": "1"})
+    banner = (
+        f"\n{'=' * 60}\n"
+        f"  최초 실행: 임시 로그인 비밀번호는 {pw} 입니다.\n"
+        f"  이 비밀번호는 이 컴퓨터에서만 로그인할 수 있습니다.\n"
+        f"  대시보드에 접속해 반드시 새 비밀번호로 바꿔 주세요.\n"
+        f"{'=' * 60}\n"
+    )
+    print(banner)
+    logging.getLogger(__name__).warning("최초 실행 - 임시 로그인 비밀번호: %s (이 컴퓨터에서만 로그인 가능, 곧 변경 필요)", pw)
+    return pw
+
+
 def _auth_password() -> str:
     from daytrader import secrets
-    return secrets.get("auth_password") or DEFAULT_AUTH_PASSWORD
+    return secrets.get("auth_password") or _generate_default_password()
+
+
+def _is_default_password() -> bool:
+    """★ 사용자가 아직 최초 생성된 임시 비밀번호를 그대로 쓰고 있는가.
+    (더는 하드코딩된 "123456"과 비교하지 않는다 - 이제 기본값도 설치마다 무작위다.)"""
+    from daytrader import secrets
+    return bool(secrets.get("auth_password_is_default"))
 
 
 def _auth_session_secret() -> str:
@@ -268,8 +305,8 @@ def _session_idle_seconds() -> int:
     return max(0, int(_idle_cache["minutes"])) * 60
 
 
-def _session_token_age(token: str | None):
-    """유효한 서명이면 발급(=마지막 사용자 조작) 후 지난 초, 아니면 None."""
+def _session_token_ts(token: str | None) -> int | None:
+    """서명이 유효하면 발급시각(정수, 초 단위 유닉스 타임)을 돌려주고, 아니면 None."""
     if not token or "." not in token:
         return None
     ts_s, sig = token.split(".", 1)
@@ -278,6 +315,14 @@ def _session_token_age(token: str | None):
     except ValueError:
         return None
     if not _same(sig, _sign_session(ts)):
+        return None
+    return ts
+
+
+def _session_token_age(token: str | None):
+    """유효한 서명이면 발급(=마지막 사용자 조작) 후 지난 초, 아니면 None."""
+    ts = _session_token_ts(token)
+    if ts is None:
         return None
     return time.time() - ts
 
@@ -318,6 +363,36 @@ def _admin_token() -> str:
     return os.environ.get("DAYTRADER_LOCAL_TOKEN", "")
 
 
+# ★★ [2-8] 실제로 겪을 수 있는 문제 - 트레이가 /admin 을 열 때 비밀 토큰을 ?token= 으로 URL 에
+# 그대로 실어 보낸다. 그 URL 은 브라우저 방문기록·세션 복원 등에 평문으로 오래 남는다(쿠키와
+# 달리 만료가 없다). 그래서 URL 의 토큰은 "한 번 쓰고 버리는" 부트스트랩으로만 쓰고, 확인되는
+# 즉시 짧게 사는 HttpOnly 쿠키로 바꿔치기한 뒤 토큰이 없는 URL(/admin)로 리다이렉트한다 -
+# 그 뒤로는 주소창·방문기록 어디에도 토큰이 남지 않는다.
+ADMIN_BOOT_COOKIE_NAME = "daytrader_admin_boot"
+ADMIN_BOOT_COOKIE_MAX_AGE = 600  # 10분 - 이 페이지를 열어 둔 채 오래 방치하면 다시 트레이로 열어야 한다.
+
+
+def _sign_admin_boot(ts: int) -> str:
+    import hashlib
+    import hmac as hmac_mod
+    msg = f"admin-boot:{ts}:{_admin_token()}".encode()
+    return hmac_mod.new(_auth_session_secret().encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _admin_boot_cookie_valid(request: Request) -> bool:
+    value = request.cookies.get(ADMIN_BOOT_COOKIE_NAME, "")
+    if not value or "." not in value:
+        return False
+    ts_s, sig = value.split(".", 1)
+    try:
+        ts = int(ts_s)
+    except ValueError:
+        return False
+    if not _same(sig, _sign_admin_boot(ts)):
+        return False
+    return -60 <= (time.time() - ts) <= ADMIN_BOOT_COOKIE_MAX_AGE
+
+
 def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
     """★ 새 기기 승인 관리자 페이지(/admin) - 이중으로 지킨다.
     1) 네트워크: _is_same_machine() - 이 서버가 도는 PC에서 연 브라우저만.
@@ -325,6 +400,8 @@ def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
        트레이가 실행마다 새로 만드는 비밀 토큰까지 같이 요구한다(트레이 메뉴로 열 때만 URL 에 실려
        온다) - _is_local_control 과 같은 토큰을 그대로 쓴다. 트레이 없이 개발용으로 직접 띄운
        경우(토큰이 아예 없음)는 1)만으로 허용한다.
+    토큰이 URL·헤더로 안 왔어도, 위에서 URL 토큰을 한 번 확인하고 심어 둔 부트스트랩 쿠키가
+    아직 유효하면 그것으로도 통과한다(admin_page 가 리다이렉트한 뒤의 /admin 재요청이 이 경로다).
     """
     if not _is_same_machine(request):
         return False
@@ -332,11 +409,95 @@ def _is_admin_local(request: Request, *, token: str | None = None) -> bool:
     if not expected:
         return True
     given = token if token is not None else request.headers.get("x-admin-token", "")
-    return bool(given) and _same(given, expected)
+    if given and _same(given, expected):
+        return True
+    return _admin_boot_cookie_valid(request)
 
 
 def _devices_path() -> str:
     return os.path.join(cfg_now().state_dir, "devices.json")
+
+
+# ★★★ [2-6] 실제로 겪을 수 있는 구멍 - /api/logout 은 예전엔 쿠키만 지웠다. 세션 쿠키 자체는
+# HMAC(발급시각:비밀번호) 로 서명된 "무상태" 토큰이라, 로그아웃해도 그 문자열 자체는 계속 유효한
+# 서명으로 남는다 - 누군가 그 쿠키 값을 미리 빼내 뒀다면(기기 도난·백업 등) 로그아웃 후에도
+# 그 값으로 계속 들어올 수 있었다. 그래서 "이 기기(쿠키)로 발급된 세션은 이 시각 이전이면
+# 더 이상 인정하지 않는다"는 기준시각을 기기별로, 그리고 전체 기기 공통으로 저장해 둔다.
+# 비밀번호를 바꾸면(서명 자체가 바뀌어) 이미 모든 기기가 로그아웃되는 것과 같은 효과를 내지만,
+# 여기서는 비밀번호를 바꾸지 않고도 "이 기기만" 또는 "전체 기기" 로그아웃을 가능하게 한다.
+_session_logout_lock = threading.Lock()
+
+
+def _session_logout_path() -> str:
+    return os.path.join(cfg_now().state_dir, "session_logout.json")
+
+
+def _load_session_logout_state() -> dict:
+    try:
+        with open(_session_logout_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_session_logout_state(data: dict) -> None:
+    try:
+        path = _session_logout_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _device_key_of(request: Request) -> str:
+    from daytrader import devices
+    token = request.cookies.get(DEVICE_COOKIE_NAME, "")
+    return devices.key_for_token(token) if token else ""
+
+
+def _record_logout(request: Request) -> None:
+    """이 기기(쿠키)로 발급된, 지금까지의 모든 세션을 무효화한다."""
+    key = _device_key_of(request)
+    if not key:
+        return
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+        now = time.time()
+        per_device = {
+            k: v for k, v in (data.get("devices") or {}).items()
+            if isinstance(v, (int, float)) and now - v < AUTH_SESSION_MAX_AGE
+        }
+        per_device[key] = now
+        data["devices"] = per_device
+        _save_session_logout_state(data)
+
+
+def _record_logout_all_devices() -> None:
+    """모든 기기의 세션을 한 번에 무효화한다("로그아웃 - 모든 기기")."""
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+        data["all_at"] = time.time()
+        data["devices"] = {}  # 전체 기준시각 하나가 개별 기록을 다 덮으니 정리해 둔다.
+        _save_session_logout_state(data)
+
+
+def _session_revoked_for(request: Request, issued_at: int) -> bool:
+    """서명은 유효한 세션 토큰이라도, 그 발급시각 이후에(이 기기 또는 전체 기기) 로그아웃 기록이
+    있으면 더는 인정하지 않는다."""
+    with _session_logout_lock:
+        data = _load_session_logout_state()
+    all_at = data.get("all_at")
+    if isinstance(all_at, (int, float)) and issued_at <= all_at:
+        return True
+    key = _device_key_of(request)
+    if not key:
+        return False
+    device_at = (data.get("devices") or {}).get(key)
+    return isinstance(device_at, (int, float)) and issued_at <= device_at
 
 
 def _is_device_trusted(request: Request) -> bool:
@@ -360,8 +521,12 @@ def _is_device_trusted(request: Request) -> bool:
 def _is_authenticated(request: Request) -> bool:
     if _is_local_control(request):
         return True
-    if not _session_token_valid(request.cookies.get(AUTH_COOKIE_NAME)):
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not _session_token_valid(token):
         return False
+    issued_at = _session_token_ts(token)
+    if issued_at is not None and _session_revoked_for(request, issued_at):
+        return False  # ★ [2-6] 로그아웃(이 기기 또는 전체 기기) 이후 발급된 적 없는 오래된 토큰.
     return _is_device_trusted(request)
 
 
@@ -392,11 +557,28 @@ def _set_device_cookie(resp: Response, request: Request, token: str) -> None:
 
 
 # ── ② Host · Origin 검증 ──
+def _split_netloc(netloc: str) -> tuple[str, str | None]:
+    """호스트[:포트] 를 (호스트, 포트-문자열-또는-None) 으로 나눈다. IPv6 대괄호([::1]:8000) 도 다룬다."""
+    n = (netloc or "").strip().lower()
+    if n.startswith("["):
+        if "]" in n:
+            end = n.index("]")
+            host = n[1:end]
+            rest = n[end + 1:]
+            return host, (rest[1:] if rest.startswith(":") else None)
+        return n, None
+    if n.count(":") == 1:
+        host, port = n.rsplit(":", 1)
+        return host, port
+    return n, None
+
+
 def _host_only(netloc: str) -> str:
-    h = (netloc or "").strip().lower()
-    if h.startswith("["):  # [::1]:8000
-        return h[1:h.index("]")] if "]" in h else h
-    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+    return _split_netloc(netloc)[0]
+
+
+def _default_port(scheme: str) -> str:
+    return "443" if scheme == "https" else "80"
 
 
 def _host_allowed(netloc: str) -> bool:
@@ -419,17 +601,43 @@ def _host_allowed(netloc: str) -> bool:
 
 
 def _origin_ok(request: Request) -> bool:
+    """CSRF 방어 - 상태를 바꾸는 요청(POST 등)이 "이 서버 자신"에서 나왔는지 확인한다.
+    ★★★ 실제로 겪을 수 있는 구멍 두 가지를 여기서 고친다.
+      ① 예전엔 Origin 의 호스트 이름만 보고(_host_allowed - "localhost·IP·Tailscale 이름인가")
+         허용했다. 그러면 Origin: http://localhost:9999(전혀 다른 포트, 즉 전혀 다른 웹앱)도
+         "localhost"라는 이유로 통과한다 - 브라우저의 동일 출처 정책은 포트까지 같아야 같은
+         출처로 보는데, 이 검증은 포트를 아예 무시했다. 그래서 이제 Origin 의 스킴·호스트·포트를
+         이 요청이 실제로 도착한 Host 헤더(+ 프록시 뒤라면 X-Forwarded-Proto)와 정확히 비교한다.
+      ② Origin 도 Sec-Fetch-Site 도 없는 요청을 "판단할 근거가 없으니 통과"로 취급했다 - 오래된
+         모든 브라우저가 아니라, 브라우저를 거치지 않고 임의로 만든 요청(예: 자동화 스크립트)도
+         이 상태와 똑같이 보인다. GET/HEAD 는 원래 안전한 메서드라 그대로 통과시키되, 상태를
+         바꾸는 요청에서 둘 다 없으면 이제 거절한다.
+    """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
+    if _is_local_control(request):
+        # ★ 트레이가 "매매 중단" 등을 보낼 때 쓰는 urllib 요청은 브라우저가 아니라서
+        # Origin·Sec-Fetch-Site 를 아예 안 보낸다 - 이미 loopback + 실행마다 새로 만드는
+        # 비밀 토큰(X-Local-Control)으로 지키고 있으니 이 검증까지 요구하지 않는다.
+        return True
     origin = request.headers.get("origin")
+    fetch_site = request.headers.get("sec-fetch-site")
     if origin:
         from urllib.parse import urlparse
         try:
-            return _host_allowed(urlparse(origin).netloc)
+            parsed = urlparse(origin)
         except ValueError:
             return False
-    fetch_site = request.headers.get("sec-fetch-site")
-    return not fetch_site or fetch_site in ("same-origin", "same-site", "none")
+        if parsed.scheme.lower() != ("https" if _is_https(request) else "http"):
+            return False
+        origin_host, origin_port = _split_netloc(parsed.netloc)
+        request_host, request_port = _split_netloc(request.headers.get("host", ""))
+        origin_port = origin_port or _default_port(parsed.scheme.lower())
+        request_port = request_port or _default_port("https" if _is_https(request) else "http")
+        return origin_host == request_host and origin_port == request_port
+    if fetch_site:
+        return fetch_site in ("same-origin", "same-site", "none")
+    return False  # ★ 상태를 바꾸는 요청인데 Origin·Sec-Fetch-Site 가 둘 다 없으면 거절.
 
 
 _CSP = (
@@ -568,21 +776,80 @@ async def auth_check(request: Request):
     authed = _is_authenticated(request)
     out = {"authenticated": authed, "idle_minutes": _session_idle_seconds() // 60}
     if authed:
-        out["default_password"] = _same(_auth_password(), DEFAULT_AUTH_PASSWORD)
+        out["default_password"] = _is_default_password()
     return out
 
 
 # ★ 무차별 대입(brute-force) 방어. 접속 IP별로 틀린 횟수를 세다가 3번째 실패부터 잠그기 시작해,
-# 틀릴 때마다 잠금 시간을 1분씩 늘린다(3번째=1분, 4번째=2분...). 서버 재시작 시 초기화되는 메모리
-# 카운터로 충분하다 - 이 앱은 사용자가 한 명뿐이라 영구 저장까지는 필요 없다.
+# 틀릴 때마다 잠금 시간을 1분씩 늘린다(3번째=1분, 4번째=2분...).
+# ★★★ 실제로 겪은 구멍 두 가지를 여기서 같이 막는다.
+#   ① 이 카운터가 메모리에만 있으면 서버를 재시작(또는 재시작을 유도)하는 것만으로 잠금이
+#      풀린다 - 그래서 상태 폴더(state_dir)의 파일에 실패 횟수를 같이 저장해 재시작에도 남는다.
+#   ② _login_client_key 가 loopback 에서 온 X-Forwarded-For 를 무조건 믿었다 - Tailscale serve
+#      처럼 이 PC 안의 신뢰할 수 있는 프록시를 거치는 배포에서는 맞는 가정이지만, 그런 프록시가
+#      없는 보통 배포에서는 loopback 에서 원격으로 요청을 보낼 수 있는 사람이 매 시도마다 헤더 값만
+#      바꿔 개별 IP 별 잠금을 통째로 우회할 수 있었다(전체 실패 횟수는 그대로다). 그래서 이제
+#      X-Forwarded-For 는 DAYTRADER_TRUSTED_PROXY=1 환경변수로 이 PC 앞에 신뢰할 수 있는 프록시가
+#      있다고 명시적으로 밝힌 배포에서만 믿는다 - 기본값(없음)은 항상 실제 접속 주소 하나로 센다.
+#   ③ ①·②와 별개로, 키를 계속 바꿔가며(다른 IP 여러 개, 또는 위 우회) 시도해도 뚫리지 않도록
+#      "누가 보냈든" 최근 10분간 실패가 너무 많으면(기본 20회) 전체를 잠깐 잠근다.
 _login_attempts: dict[str, dict] = {}
+_global_login_fails: list[float] = []
+_global_login_locked_until: float = 0.0
+_login_state_lock = threading.Lock()
+_login_state_loaded = False
+_GLOBAL_LOGIN_FAIL_WINDOW = 600  # 10분
+_GLOBAL_LOGIN_FAIL_LIMIT = 20
+_GLOBAL_LOGIN_LOCK_SECONDS = 600  # 10분
+
+
+def _login_state_path() -> str:
+    return os.path.join(cfg_now().state_dir, "login_attempts.json")
+
+
+def _load_login_state() -> None:
+    """서버가 막 뜬 뒤 처음 로그인 시도가 들어올 때 한 번, 저장돼 있던 실패 기록을 불러온다."""
+    global _login_attempts, _global_login_fails, _global_login_locked_until, _login_state_loaded
+    if _login_state_loaded:
+        return
+    _login_state_loaded = True
+    try:
+        with open(_login_state_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            attempts = data.get("attempts")
+            if isinstance(attempts, dict):
+                _login_attempts = {k: v for k, v in attempts.items() if isinstance(v, dict)}
+            fails = data.get("global_fails")
+            if isinstance(fails, list):
+                _global_login_fails = [float(t) for t in fails if isinstance(t, (int, float))]
+            _global_login_locked_until = float(data.get("global_locked_until") or 0.0)
+    except Exception:
+        pass  # 파일이 없거나 깨졌으면 "실패 기록 없음"으로 시작한다 - 로그인 자체가 막히면 안 된다.
+
+
+def _save_login_state() -> None:
+    try:
+        path = _login_state_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({
+                "attempts": _login_attempts,
+                "global_fails": _global_login_fails,
+                "global_locked_until": _global_login_locked_until,
+            }, f)
+    except Exception:
+        pass  # 저장 실패는(디스크 문제 등) 로그인 기능 자체를 막을 이유가 아니다.
 
 
 def _login_client_key(request: Request) -> str:
-    """Tailscale serve 같은 프록시를 거치면 모든 요청이 127.0.0.1 로 보인다 - 그때는 프록시가 붙여
-    준 X-Forwarded-For 의 원래 주소로 센다(loopback 에서 온 요청일 때만 믿는다)."""
+    """무차별 대입 잠금을 셀 때 쓰는 키 = 보통은 접속 주소 그 자체.
+    DAYTRADER_TRUSTED_PROXY=1 일 때만(이 PC 안의 신뢰할 수 있는 프록시, 예: Tailscale serve, 를
+    직접 구성해 뒀다고 사용자가 명시한 경우) loopback 에서 온 요청의 X-Forwarded-For 원래 주소를
+    대신 쓴다 - 그런 설정이 없는 보통 배포에서 이 헤더는 요청을 보내는 쪽이 마음대로 넣을 수 있는
+    값이라 그대로 믿으면 헤더만 바꿔가며 개별 잠금을 피할 수 있다."""
     host = request.client.host if request.client else "unknown"
-    if host in _LOOPBACK:
+    if host in _LOOPBACK and os.environ.get("DAYTRADER_TRUSTED_PROXY", "").strip() == "1":
         fwd = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         if fwd:
             return fwd[:64]
@@ -590,6 +857,7 @@ def _login_client_key(request: Request) -> str:
 
 
 def _login_check_lock(key: str) -> None:
+    _load_login_state()
     entry = _login_attempts.get(key)
     if not entry:
         return
@@ -602,20 +870,47 @@ def _login_check_lock(key: str) -> None:
         )
 
 
+def _global_login_check_lock() -> None:
+    _load_login_state()
+    cutoff = time.time() - _GLOBAL_LOGIN_FAIL_WINDOW
+    _global_login_fails[:] = [t for t in _global_login_fails if t > cutoff]
+    remaining = _global_login_locked_until - time.time()
+    if remaining > 0:
+        wait_min = int(remaining // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"로그인 실패가 너무 많았습니다. {wait_min}분 후 다시 시도하세요.",
+        )
+
+
 def _login_record_fail(key: str) -> None:
+    _load_login_state()
     entry = _login_attempts.setdefault(key, {"fails": 0, "locked_until": 0.0})
     entry["fails"] += 1
     if entry["fails"] >= 3:
         lockout_minutes = entry["fails"] - 2
         entry["locked_until"] = time.time() + lockout_minutes * 60
+    global _global_login_locked_until
+    now = time.time()
+    _global_login_fails.append(now)
+    cutoff = now - _GLOBAL_LOGIN_FAIL_WINDOW
+    _global_login_fails[:] = [t for t in _global_login_fails if t > cutoff]
+    if len(_global_login_fails) >= _GLOBAL_LOGIN_FAIL_LIMIT:
+        _global_login_locked_until = now + _GLOBAL_LOGIN_LOCK_SECONDS
+    _save_login_state()
 
 
 def _login_record_success(key: str) -> None:
-    _login_attempts.pop(key, None)
+    _load_login_state()
+    if _login_attempts.pop(key, None) is not None:
+        _save_login_state()
 
 
 def _check_password_or_raise(request: Request, password: str) -> None:
+    """/api/login 과 /api/confirm 이 함께 쓴다 - 둘 다 "비밀번호를 아는가"를 확인하는 관문이라
+    잠금·전역 잠금을 공유해야 한다(그렇지 않으면 한쪽이 잠겨도 다른 쪽으로 계속 시도할 수 있다)."""
     key = _login_client_key(request)
+    _global_login_check_lock()
     _login_check_lock(key)
     if not _same(password.strip(), _auth_password()):
         _login_record_fail(key)
@@ -626,6 +921,15 @@ def _check_password_or_raise(request: Request, password: str) -> None:
 @app.post("/api/login")
 @api_guard
 async def login(body: LoginIn, request: Request):
+    # ★★★ 최초 실행으로 만들어진 임시 비밀번호가 아직 그대로라면, 그 값이 무작위라 해도
+    # 원격에서는 아예 로그인을 받지 않는다 - 콘솔에 뜬 값을 어깨너머로 보거나 관리자가
+    # 실수로 남에게 전달했을 수도 있으니, 비밀번호를 바꾸기 전까지는 이 컴퓨터 앞이 아니면
+    # 통과시키지 않는 것이 안전하다(_is_same_machine 은 다른 원격 우회 방어와 같은 기준).
+    if _is_default_password() and not _is_same_machine(request):
+        raise HTTPException(
+            status_code=403,
+            detail="아직 최초 실행 때 만들어진 임시 비밀번호입니다. 이 컴퓨터에서 대시보드에 접속해 먼저 비밀번호를 바꿔 주세요.",
+        )
     _check_password_or_raise(request, body.password)
     from daytrader import devices
     ip = _login_client_key(request)  # 이제 식별에는 안 쓴다 - 관리자 화면에 보여줄 참고 정보로만.
@@ -741,7 +1045,23 @@ def _require_admin_local(request: Request) -> None:
 
 @app.get("/admin")
 async def admin_page(request: Request, token: str = ""):
-    if not _is_admin_local(request, token=token):
+    if token:
+        # ★ [2-8] URL 로 받은 토큰은 검증되는 즉시 소모한다 - 짧게 사는 HttpOnly 쿠키를 심고,
+        # 토큰이 안 보이는 URL 로 리다이렉트한다(그 뒤로 주소창·방문기록에 토큰이 남지 않는다).
+        if not _is_admin_local(request, token=token):
+            return HTMLResponse(
+                "<h3>이 페이지는 서버가 도는 PC에서, 트레이 메뉴의 '새 기기 승인 관리'로 열어야 볼 수 있습니다.</h3>",
+                status_code=403,
+            )
+        resp = RedirectResponse(url="/admin", status_code=302)
+        ts = int(time.time())
+        resp.set_cookie(
+            ADMIN_BOOT_COOKIE_NAME, f"{ts}.{_sign_admin_boot(ts)}",
+            max_age=ADMIN_BOOT_COOKIE_MAX_AGE, httponly=True, samesite="strict",
+            secure=_is_https(request), path="/admin",
+        )
+        return resp
+    if not _is_admin_local(request):
         return HTMLResponse(
             "<h3>이 페이지는 서버가 도는 PC에서, 트레이 메뉴의 '새 기기 승인 관리'로 열어야 볼 수 있습니다.</h3>",
             status_code=403,
@@ -822,7 +1142,21 @@ async def confirm_password(body: ConfirmIn, request: Request):
 
 @app.post("/api/logout")
 @api_guard
-async def logout():
+async def logout(request: Request):
+    # ★ [2-6] 쿠키만 지우면 그 값 자체(HMAC 서명)는 여전히 유효해, 미리 빼돌려진 쿠키로는 로그아웃
+    # 후에도 계속 들어올 수 있었다. 이 기기(daytrader_device 쿠키)로 지금까지 발급된 세션은 여기서
+    # 서버 쪽에도 무효로 기록해 둔다.
+    _record_logout(request)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.post("/api/logout/all")
+@api_guard
+async def logout_all(request: Request):
+    """[2-6] 모든 기기에서 로그아웃 - 기기를 잃어버렸거나 낯선 세션이 의심될 때 쓴다."""
+    _record_logout_all_devices()
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return resp
@@ -849,7 +1183,9 @@ async def change_password(body: AuthPasswordIn, request: Request):
         raise HTTPException(status_code=400, detail="비밀번호는 숫자 6자리여야 합니다.")
     if _weak_password(pw):
         raise HTTPException(status_code=400, detail="너무 쉬운 비밀번호입니다(같은 숫자 반복·연속 숫자·기본값 불가). 다른 6자리를 골라 주세요.")
-    secrets.save({"auth_password": pw})
+    # ★ 사용자가 직접 고른 비밀번호이니, 최초 실행 때의 "임시 비밀번호" 딱지를 뗀다
+    # (이게 남아 있으면 login() 이 계속 원격 로그인을 막는다).
+    secrets.save({"auth_password": pw, "auth_password_is_default": ""})
     resp = JSONResponse({"ok": True})
     _set_session_cookie(resp, request)  # ★ 방금 바꾼 사람까지 로그아웃되면 안 되니 새 쿠키를 바로 심어 준다.
     return resp
@@ -949,6 +1285,15 @@ def _write_config_raw(raw) -> None:
             500,
             f"설정을 저장하지 못했습니다(파일 형식이 깨질 뻔해 되돌렸습니다): {exc}",
         )
+
+    # ★ [4-3] 지금 파일을 덮어쓰기 직전, config.yaml.bak 으로 한 벌 남겨 둔다 -
+    # 저장이 검증까지 통과해도 사용자가 원치 않는 값을 저장했을 수 있으니,
+    # 되돌릴 수단은 있어야 한다. 백업 자체가 실패해도 저장은 막지 않는다.
+    if os.path.exists(CONFIG_PATH):
+        try:
+            shutil.copyfile(CONFIG_PATH, f"{CONFIG_PATH}.bak")
+        except OSError as exc:
+            logging.getLogger(__name__).warning("config.yaml.bak 백업 실패(저장은 계속 진행): %s", exc)
 
     os.replace(tmp_path, CONFIG_PATH)
 
@@ -1647,13 +1992,28 @@ def build_market_review(market: str = "domestic") -> str | None:
     return mc.compose(cfg, headlines, market=market, price_snapshot=price_snapshot)
 
 
+def _market_review_unavailable_reason(cfg) -> str:
+    """build_market_review() 가 None 을 돌려줬을 때 화면·로그에 보여줄 문구.
+    ★★★ 예전에는 이 사유가 항상 "Groq 키가 등록되어 있지 않습니다" 하나뿐이었다 - 키를 이미
+    등록해 두고도 두 키가 모두 한도 초과·인증 오류로 막힌 날에도 똑같이 "키가 없다"고 나와
+    사용자가 잘못된 곳(설정 화면에서 키를 다시 넣는 것)을 고치게 만들었다. llm.status() 의
+    실제 실패 사유(예: "한도 초과(429)")를 등록 여부와 구분해서 보여준다."""
+    from daytrader import llm
+    if not llm.available(cfg):
+        return "Groq 키가 등록되어 있지 않습니다([설정] → 속보에서 Groq 키를 등록하세요)."
+    err = (llm.status().get("last_error") or "").strip()
+    if err:
+        return f"Groq 를 지금 쓸 수 없습니다({_redact(err)}) - 규칙 기반으로 넘어가는 뉴스 필터와 달리, 시장 평가는 Groq 없이는 만들 수 없어 건너뜁니다."
+    return "오늘 참고할 뉴스·시세 자료가 없거나 Groq 응답이 비어 있습니다."
+
+
 def _send_market_review(market: str = "domestic") -> tuple:
     from daytrader import notify
     from daytrader import market_commentary as mc
     cfg = cfg_now()
     text = build_market_review(market)
     if not text:
-        return False, "뉴스·시세가 없거나 Groq 를 쓸 수 없습니다."
+        return False, _market_review_unavailable_reason(cfg)
     ok, err = notify.Telegram(cfg).send_now(text)
     if ok:
         mc.save_review(cfg, market, text)
@@ -1763,7 +2123,7 @@ def preview_market_review(market: str = "domestic"):
         raise HTTPException(status_code=400, detail="market 은 domestic · overseas 중 하나여야 합니다.")
     text = build_market_review(market)
     if not text:
-        return {"text": "", "reason": "뉴스·시세가 없거나 Groq 키가 등록되어 있지 않습니다([설정] → 속보에서 Groq 키를 등록하세요)."}
+        return {"text": "", "reason": _market_review_unavailable_reason(cfg_now())}
     return {"text": text}
 
 
@@ -1796,7 +2156,7 @@ async def get_notify():
 
 @app.post("/api/notify/test")
 @api_guard
-async def notify_test(body: NotifyTestIn):
+async def notify_test(body: NotifyTestIn, request: Request):
     """★★ A-26. enabled() 로 판정하면 연습 모드에서는 연결 확인 자체가
     영구히 불가능해진다. 값이 채워졌는지만 본다.
 
@@ -1804,11 +2164,22 @@ async def notify_test(body: NotifyTestIn):
     입력칸은 저장 후 비워진다(저장된 토큰을 화면에 다시 뿌리지 않는다).
     그런데 여기서 빈 값이면 400 을 냈으니, 저장하고 바로 테스트를 누르면
     반드시 실패했다. 입력칸이 비어 있으면 저장된 값으로 시험한다.
+
+    ★★★ [2-4] 실제로 겪을 수 있는 구멍 - 이 API 는 몸체로 받은 토큰·채팅ID 를 그대로 써서
+    서버가 대신 외부(api.telegram.org)로 요청을 보낸다. 세션 쿠키만 있으면(재확인 없이도)
+    호출할 수 있었던 예전 버전은, 탈취된 세션 쿠키 하나로 서버를 시켜 "아무 봇 토큰·채팅 ID"로나
+    메시지를 보낼 수 있는 통로였다(스팸 발송대·서버의 공인 IP 확인용 SSRF 성 악용 등). 저장된
+    값으로 시험할 때는 이미 그 값 자체가 재확인을 거쳐 저장됐으니 그대로 두되, 호출자가 새
+    토큰·채팅ID 를 직접 넣어 시험하려는 경우에는 다른 설정 변경과 같은 수준(재확인 토큰)을 요구한다.
     """
     from daytrader import notify
     cfg = cfg_now()
-    token = (body.token or "").strip() or (cfg.notify.telegram_token or "").strip()
-    chat_id = (body.chat_id or "").strip() or (cfg.notify.telegram_chat_id or "").strip()
+    caller_token = (body.token or "").strip()
+    caller_chat_id = (body.chat_id or "").strip()
+    if caller_token or caller_chat_id:
+        _require_confirm("settings")(request)
+    token = caller_token or (cfg.notify.telegram_token or "").strip()
+    chat_id = caller_chat_id or (cfg.notify.telegram_chat_id or "").strip()
     if not (token and chat_id):
         raise HTTPException(
             400,
@@ -1967,7 +2338,15 @@ def overseas_selection(refresh: int = 0):
 
 @app.get("/api/overseas/status")
 @api_guard
-async def overseas_status():
+def overseas_status():
+    """★★★ [8-1] 실제로 겪은 버그(py-spy 로 확인) - 이 라우트가 async def 였는데,
+    엔진이 꺼져 있을 때 _usd_krw_rate() 가 (캐시가 비었으면) market.snapshot() 을
+    동기(블로킹)로 호출한다 - 엔진이 켜져 있어도 _overseas_engine.snapshot() 안의
+    _safe_usd_krw_rate() 가 같은 경로를 탄다. await 로 스레드에 넘기지 않고
+    async def 안에서 그대로 부르면, 그 네트워크 호출이 끝날 때까지 서버 전체
+    (다른 모든 요청)가 멈춘다. 이 라우트는 await 를 쓰지 않으므로 일반 def 로
+    바꿔 FastAPI 가 스레드풀(run_in_threadpool)에서 돌리게 한다 - 동작은 그대로.
+    """
     if _overseas_engine is not None:
         return _overseas_engine.snapshot()
     # ★★★ 실제로 겪은 버그 - 엔진을 아직 시작 안 했거나 정지한 상태에서
@@ -2261,8 +2640,13 @@ async def swing_journal():
 
 @app.get("/api/overseas/ticker")
 @api_guard
-async def overseas_ticker():
-    """★ 관심 종목의 시세만 관찰한다. 자동매매 로직은 없다."""
+def overseas_ticker():
+    """★ 관심 종목의 시세만 관찰한다. 자동매매 로직은 없다.
+    ★★ [8-1] get_client().stocks(...)·market_mod._fetch_yahoo_session_group(...) 모두
+    실제 네트워크 호출(블로킹)이라, 원래 async def 로 돼 있으면 그동안 이벤트 루프
+    전체가 멈춘다(overseas_status() 와 같은 문제). 일반 def 로 바꿔 FastAPI 가 스레드
+    풀에서 돌리게 한다.
+    """
     from daytrader import market as market_mod
     from daytrader import netutil
     from daytrader.timeutil import now_kst
@@ -2275,7 +2659,7 @@ async def overseas_ticker():
     # 에서 볼 수 없었다. /api/overseas/status 가 이미 정확한 유효
     # 목록(엔진이 돌면 자동선정 결과, 아니면 고정 목록)을 계산해 주니
     # 그대로 재사용한다.
-    status = await overseas_status()
+    status = overseas_status()
     watchlist = status.get("watchlist") or cfg.overseas.watchlist
     if not watchlist:
         return {"ok": True, "rows": [], "note": "관심 종목이 없습니다. [설정] → 해외주식에서 티커를 추가하세요."}
@@ -2301,9 +2685,12 @@ async def overseas_ticker():
 
 @app.get("/api/bithumb/ticker")
 @api_guard
-async def bithumb_ticker():
+def bithumb_ticker():
     """★ 인증이 필요 없는 공개 시세만 본다 - 계좌 조회 없이도 관찰할 수 있다.
     ★★ 아직 자동매매 로직은 없다. 이 화면은 관찰용이다.
+    ★★ [8-1] BithumbClient.ticker() 는 실제 네트워크 호출(블로킹)이다 - async def 로
+    두면 그동안 이벤트 루프 전체가 멈춘다. 일반 def 로 바꿔 FastAPI 가 스레드풀에서
+    돌리게 한다.
     """
     from daytrader.bithumb_api import BithumbClient, BithumbApiError
     try:
@@ -2578,7 +2965,7 @@ def get_integrations():
     # 그대로 쓰고 있는지만 알려준다. secrets.yaml 에 값이 저장돼 있는지가
     # 아니라 "지금 유효한 비밀번호가 기본값과 같은가"를 봐야 한다 -
     # 사용자가 굳이 123456 을 다시 입력해 저장해도 여전히 기본값이다.
-    auth = {"is_default_password": _auth_password() == DEFAULT_AUTH_PASSWORD}
+    auth = {"is_default_password": _is_default_password()}
     return {"toss": toss, "telegram": telegram, "bithumb": bithumb, "llm": llm, "auth": auth}
 
 
@@ -3056,6 +3443,15 @@ def _trading_locks() -> dict:
 @app.post("/api/config", dependencies=[_CONFIRM_SETTINGS])
 @api_guard
 async def post_config(body: dict):
+    # ★ config.yaml 최상위에 올 수 있는 항목만 받는다 - load_config() 도 결국 같은 목록으로
+    # 걸러내지만, 여기서 먼저 막아야 알 수 없는 키(예: 오타·다른 스키마를 노린 조작)가
+    # raw.update(body) 로 병합되기 전에 분명한 400 으로 거절된다.
+    unknown_keys = set(body.keys()) - KNOWN_TOP_LEVEL_KEYS
+    if unknown_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=f"알 수 없는 설정 항목입니다: {', '.join(sorted(unknown_keys))}",
+        )
     # ★★★ 예전엔 국내주식이 거래 중이면(runner.running) 설정 저장 전체를
     # 막았다 - 암호화폐만 거래 중이고 국내주식은 쉬고 있어도 국내 설정을
     # 못 고치는 등, 실제로 거래 중인 시장과 무관한 설정까지 막혀서
@@ -3169,7 +3565,7 @@ def get_news_feed():
 
 @app.get("/api/market")
 @api_guard
-async def get_market(refresh: bool = False, ttl: float | None = None):
+def get_market(refresh: bool = False, ttl: float | None = None):
     """지수·선물·미국주·환율·코인 - 매매 판단에 개입하지 않는 관찰용 화면.
     ★ 국내 개별 종목은 토스증권 API 를 1순위로 쓴다 - 키가 등록돼 있으면 넘긴다.
     """
@@ -3186,7 +3582,7 @@ async def get_market(refresh: bool = False, ttl: float | None = None):
 
 @app.get("/api/news")
 @api_guard
-async def get_news(hours: float = 24.0):
+def get_news(hours: float = 24.0):
     from daytrader.screener import load_themes
     from daytrader.simulator import load_theme_names
     cfg = cfg_now()
@@ -3200,7 +3596,7 @@ async def get_news(hours: float = 24.0):
 
 @app.post("/api/news/refresh")
 @api_guard
-async def refresh_news():
+def refresh_news():
     feed = get_news_feed()
     items, errors = feed.fetch(force=True)
     return {"ok": True, "items": len(items), "errors": errors}
@@ -3208,7 +3604,7 @@ async def refresh_news():
 
 @app.get("/api/news/test")
 @api_guard
-async def test_news():
+def test_news():
     return get_news_feed().self_test()
 
 
