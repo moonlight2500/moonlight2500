@@ -14,6 +14,7 @@ import signal
 import threading
 import time
 from datetime import datetime, timedelta
+from math import isnan
 from types import SimpleNamespace
 
 from daytrader import notify, session
@@ -170,6 +171,9 @@ class Engine:
         self.candidate_verdicts: dict = {}
         self._last_verdicts: dict = {}
         self._orb_done: dict = {}
+        # ★ 종목별 당일 세션 누적 VWAP·고가(3-2). {symbol: {vwap_num, vwap_den, high, last_ts}}.
+        #   _rollover_if_new_day() 에서 날짜가 바뀔 때 함께 비운다.
+        self._session_stats: dict = {}
 
         self.pnl_curve: list = []
         self.equity_curve: list = []
@@ -405,6 +409,41 @@ class Engine:
         except Exception:
             pass
 
+    def _session_stats_for(self, symbol: str, bars) -> tuple:
+        """★★★ 실제로 겪은 문제(3-2) - 진입·청산 판정에 넘기는 bars 는 부하를
+        줄이려 최근 60~수백 개짜리 굴러가는 창만 받아 온다(_recent_bars/_entry_bars).
+        playbook 의 vwap(bars)·day_high=max(b.high for b in bars) 는 그 창 전체를
+        "당일"로 착각해, 09:00 개장 이후 그 창 밖으로 밀려난 값은 조용히 사라진다.
+        ★ count 를 늘려 한 번에 09:00 부터 다 받아 오면 될 것 같지만 그러면 안 된다 -
+        국내 라우터/토스 클라이언트는 한 번에 200개 넘게 요청하면 오류 없이 빈
+        배열을 돌려준다(technique_backtest.py 의 _ROUTER_BATCH 주석 참고). 게다가
+        QuoteRouter(엔진이 실제로 쓰는 래퍼)는 candles() 에 before 페이지 파라미터도
+        안 받아 여러 페이지로 나눠 받을 수도 없다.
+        그래서 라우터 호출은 그대로 두고, 매 루프 새로 확정된 봉만(ts 로 판별) 골라
+        VWAP 분자·분모와 고가를 세션 시작부터 누적해 둔다. 엔진이 하루 종일(적어도
+        개장 근처부터) 계속 돌고 있다는 전제 하에, 매 루프 조금씩 더 들어오는
+        굴러가는 창을 그냥 이어붙이는 셈이라 안전하고 API 호출 방식도 안 바뀐다.
+        """
+        st = self._session_stats.get(symbol)
+        if st is None:
+            st = {"vwap_num": 0.0, "vwap_den": 0.0, "high": float("-inf"), "last_ts": None}
+            self._session_stats[symbol] = st
+        for b in bars or []:
+            ts = str(b.ts)
+            if st["last_ts"] is not None and ts <= st["last_ts"]:
+                continue  # 이미 이전 루프에서 누적한 봉이다 - 중복 반영 금지
+            if isnan(b.high) or isnan(b.low) or isnan(b.close) or isnan(b.volume):
+                continue
+            typical = (b.high + b.low + b.close) / 3
+            st["vwap_num"] += typical * b.volume
+            st["vwap_den"] += b.volume
+            if b.high > st["high"]:
+                st["high"] = b.high
+            st["last_ts"] = ts
+        v = st["vwap_num"] / st["vwap_den"] if st["vwap_den"] else float("nan")
+        h = st["high"] if st["high"] != float("-inf") else float("nan")
+        return v, h
+
     def _entry_bars(self, symbol: str, count: int = 60):
         """★ 진입 판정에서 봉을 읽는 모든 곳은 반드시 이걸 거친다.
         진행 중인 봉은 거래량이 부분값이라 '직전 평균의 2배' 판정이 왜곡되고
@@ -485,13 +524,15 @@ class Engine:
             self._track(pos, last)
 
             sz = self.cfg.sizing
+            bars = self._recent_bars(symbol)
+            session_vwap, session_high = self._session_stats_for(symbol, bars)
             ctx = SimpleNamespace(
                 held_minutes=pos.held_minutes(self.clock.now()),
                 force_close=force_close, now=self.clock.now(),
                 prev_verdict=self._last_verdicts.get(symbol), cfg=self.cfg,
                 scale_out=bool(sz.scale_out),  # 분할 매도를 쓰면 고정 익절(전량)은 끄고 나눠서 판다.
+                session_vwap=session_vwap, session_high=session_high,
             )
-            bars = self._recent_bars(symbol)
             verdict = self.playbook.evaluate_exit(pos, bars, last, ctx)
             if verdict is not None:
                 self._last_verdicts[symbol] = verdict
@@ -718,12 +759,14 @@ class Engine:
         entry_bars, _partial = self._entry_bars(symbol, max(80, self.cfg.entry.breakout_lookback * 4))
         if not entry_bars:
             return
+        session_vwap, session_high = self._session_stats_for(symbol, entry_bars)
         ctx = SimpleNamespace(
             symbol=symbol, name=pos.name, theme=pos.theme, upper_limit=None, theme_bars=None, now=self.clock.now(),
             prev_verdict=None, prev_verdicts=[], change_rate=(cand.change_rate if cand else 0.0),
             theme_rank=(cand.theme_rank if cand else 0), theme_breadth=(cand.theme_breadth if cand else 0),
             theme_intensity=(cand.theme_intensity if cand else 0.0), orb_done=True, minutes_to_close=minutes_left,
             window=self._window, kr_session=True,
+            session_vwap=session_vwap, session_high=session_high,
         )
         try:
             winner, _ = self.playbook.evaluate_entry(entry_bars, ctx)
@@ -966,6 +1009,7 @@ class Engine:
                         theme_bars = other_bars
                         break
 
+            session_vwap, session_high = self._session_stats_for(cand.symbol, bars)
             ctx = SimpleNamespace(
                 symbol=cand.symbol, name=cand.name, theme=cand.theme,
                 upper_limit=upper_limit, theme_bars=theme_bars, now=self.clock.now(),
@@ -976,6 +1020,7 @@ class Engine:
                 orb_done=self._orb_done.get(cand.symbol, False),
                 minutes_to_close=minutes_between(self.clock.now(), self._force_close_dt()),
                 window=self._window, kr_session=True,
+                session_vwap=session_vwap, session_high=session_high,
             )
 
             winner, all_verdicts = self.playbook.evaluate_entry(bars, ctx)
@@ -1315,6 +1360,7 @@ class Engine:
             self.candidate_status = {}
             self.candidate_verdicts = {}
             self._last_verdicts = {}
+            self._session_stats = {}
             self.report = None
             self.equity_curve = []
             self.pnl_curve = []

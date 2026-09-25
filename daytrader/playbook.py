@@ -196,6 +196,25 @@ class Verdict:
 
 # ━━ 3) 헬퍼 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def session_vwap_or(bars, ctx):
+    """★ 3-2 - ctx.session_vwap(엔진이 09:00 개장부터 누적해 온 당일 VWAP)이
+    있으면 그걸 쓰고, 없으면(백테스트·다른 마켓 엔진 등 세션 누적을 안 넘기는
+    호출자) 지금까지 받은 bars 만으로 근사한 vwap(bars) 로 물러난다."""
+    v = getattr(ctx, "session_vwap", NAN)
+    if v is None or isnan(v):
+        return vwap(bars) if bars else NAN
+    return v
+
+
+def session_high_or(bars, ctx):
+    """★ 3-2 - session_vwap_or() 와 같은 이유로, ctx.session_high(당일 누적 고가)가
+    없으면 받아 온 bars 창의 최고가로 근사한다."""
+    h = getattr(ctx, "session_high", NAN)
+    if h is None or isnan(h):
+        return max((b.high for b in bars), default=NAN) if bars else NAN
+    return h
+
+
 def fmt_val(v, unit: str = "") -> str:
     """값을 단위에 맞춰 사람이 읽기 좋은 문자열로 바꾼다."""
     if v is None or (isinstance(v, float) and isnan(v)):
@@ -598,7 +617,9 @@ class VwapPullbackEntry(EntryBase):
     )
     standard = (
         "30봉 구간마다 VWAP 을 다시 계산하면 O(n^2)이 되므로, 현재 VWAP 값 하나로 "
-        "근사해 그 위/아래 비율을 판정한다."
+        "근사해 그 위/아래 비율을 판정한다. VWAP 값 자체는 엔진이 09:00 개장부터 "
+        "누적해 온 당일 값(ctx.session_vwap)을 쓰고, 그게 없는 호출자(백테스트 등)만 "
+        "받아 온 봉 구간으로 근사한다."
     )
 
     def evaluate(self, bars, ctx) -> Verdict:
@@ -608,7 +629,7 @@ class VwapPullbackEntry(EntryBase):
 
         price = bars[-1].close if bars else 0.0
         recent = bars[-window:] if len(bars) >= window else bars
-        v = vwap(bars)
+        v = session_vwap_or(bars, ctx)
         close = bars[-1].close if bars else NAN
         open_ = bars[-1].open if bars else NAN
 
@@ -698,7 +719,8 @@ class VwapReclaimEntry(EntryBase):
         "실패한 하락 반전(Failed Breakdown, Al Brooks, 2009)의 결합"
     )
     standard = (
-        "VWAP 은 지금까지 받은 봉 전체로 계산한 현재 값 하나를 쓴다(과거 각 시점의 VWAP 이 아니다). "
+        "VWAP 은 엔진이 09:00 개장부터 누적해 온 당일 값(ctx.session_vwap) 하나를 쓴다"
+        "(과거 각 시점의 VWAP 이 아니다). 그게 없는 호출자는 지금까지 받은 봉 전체로 근사한다. "
         "'아래에 있었다'는 판정도 그 한 값을 기준으로 근사한다."
     )
 
@@ -712,7 +734,7 @@ class VwapReclaimEntry(EntryBase):
         close_pos = self._get("close_pos", 0.6)
 
         price = bars[-1].close if bars else 0.0
-        v = vwap(bars)
+        v = session_vwap_or(bars, ctx)
         cur = bars[-1] if bars else None
         prev = bars[-2] if len(bars) >= 2 else None
         close = cur.close if cur else NAN
@@ -860,7 +882,12 @@ class CloseSqueezeEntry(EntryBase):
         "15:10 강제 청산까지 짧게 보유한다."
     )
     origin = "마감 모멘텀(Closing Momentum) — 일중 수익률의 마지막 30분 지속 효과: Heston·Korajczyk·Sadka(2010, Journal of Finance)"
-    standard = "당일 고점은 받아 온 최근 분봉(최대 80분)의 최고가로 근사한다. VWAP 상승 여부는 최근 10봉 전과 지금의 VWAP 을 비교한다."
+    standard = (
+        "당일 고점·VWAP 은 엔진이 09:00 개장부터 누적해 온 값(ctx.session_high/session_vwap)을 쓴다"
+        "(그게 없는 호출자만 받아 온 최근 분봉 창의 최고가·VWAP 으로 근사한다). "
+        "VWAP 상승 여부(vwap_up)는 그 근사 방식의 한계로, 세션 누적 VWAP 이 아니라 "
+        "받아 온 창 안에서 최근 10봉 전과 지금을 비교하는 근사를 그대로 쓴다."
+    )
 
     def evaluate(self, bars, ctx) -> Verdict:
         start_min = self._get("start_min", 14 * 60 + 30)
@@ -876,9 +903,9 @@ class CloseSqueezeEntry(EntryBase):
         chg = float(getattr(ctx, "change_rate", NAN))
         close = bars[-1].close if bars else NAN
         price = close if not isnan(close) else 0.0
-        day_high = max((b.high for b in bars), default=NAN)
+        day_high = session_high_or(bars, ctx)
         off_high = (day_high - close) / day_high if not isnan(day_high) and day_high else NAN
-        v_now = vwap(bars) if bars else NAN
+        v_now = session_vwap_or(bars, ctx)
         v_before = vwap(bars[:-10]) if len(bars) > 20 else NAN
         vwap_up = (v_now / v_before - 1.0) if not isnan(v_now) and not isnan(v_before) and v_before else NAN
         recent = [b.volume for b in bars[-5:]]
@@ -1656,7 +1683,11 @@ class MomentumFadeExit(ExitBase):
     label = "모멘텀 소멸"
     description = "거래량 위축·연속 하락·VWAP 이탈 등 상승 동력이 꺼지는 징후가 겹치면 정리한다."
     origin = "모멘텀 소멸 — 다우 이론의 '거래량은 추세를 확인한다'"
-    standard = "세 징후 중 2개 이상 겹칠 때만 청산해, 단일 지표의 노이즈에 흔들리지 않게 했다."
+    standard = (
+        "세 징후 중 2개 이상 겹칠 때만 청산해, 단일 지표의 노이즈에 흔들리지 않게 했다. "
+        "VWAP 이탈(below_vwap)의 VWAP 값은 엔진이 09:00 개장부터 누적해 온 당일 값"
+        "(ctx.session_vwap)을 쓴다."
+    )
 
     def evaluate(self, pos, bars, last, ctx) -> Verdict:
         fade_ratio = self._get("volume_fade_ratio", 0.5)
@@ -1677,7 +1708,7 @@ class MomentumFadeExit(ExitBase):
         cur_volume = (sum(recent_vols) / len(recent_vols)) if recent_vols else NAN
         vol_fade_val = (cur_volume / entry_volume) if entry_volume else NAN
         streak = consecutive_down(bars, bear_streak_n) if bars else NAN
-        v = vwap(bars) if bars else NAN
+        v = session_vwap_or(bars, ctx)
 
         fade_terms = [
             mk_term(
