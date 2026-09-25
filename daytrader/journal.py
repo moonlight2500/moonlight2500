@@ -13,6 +13,7 @@ KIND_LABELS = {
     "theme_scan": "테마 선정", "pick": "후보 선정", "reject": "후보 제외",
     "watch": "관찰 중", "evaluate": "판정", "buy": "매수", "sell": "매도",
     "halt": "매매 중단", "session": "세션", "reconcile": "계좌 대조",
+    "overnight": "오버나이트 판단",
 }
 
 

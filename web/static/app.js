@@ -5725,6 +5725,25 @@
       (byGroup[g] || (byGroup[g] = [])).push(section);
     });
 
+    // ★ f.showIf = { path, equals } 인 필드를, 그 path 의 체크박스 값에 맞춰
+    // 보이거나 숨긴다(값이 바뀔 때도 즉시 반영). 조건 필드가 같은 섹션 안에
+    // 없으면(다른 카드에 있으면) 아무것도 하지 않는다 - 지금은 exit.allow_overnight
+    // 하나만 쓰지만, 스키마에 showIf 만 추가하면 다른 bool 필드에도 그대로 쓸 수 있다.
+    function _wireShowIf(builtNodes) {
+      builtNodes.forEach(({ f, node }) => {
+        if (!f.showIf) return;
+        const ctrl = builtNodes.find((x) => x.f.path === f.showIf.path);
+        const ctrlInput = ctrl && ctrl.node.querySelector('[data-path="' + f.showIf.path + '"]');
+        if (!ctrlInput) return;
+        const apply = () => {
+          const show = f.showIf.equals === undefined ? !!ctrlInput.checked : ctrlInput.checked === f.showIf.equals;
+          node.style.display = show ? "" : "none";
+        };
+        ctrlInput.addEventListener("change", apply);
+        apply();
+      });
+    }
+
     function renderSectionCard(section) {
       const sectionEl = el("section", { class: "card" });
       // ★★★ 섹션 설명(note)도 제목 호버로 - 섹션마다 한 줄씩 깔리면
@@ -5746,6 +5765,13 @@
         $$("input, select, textarea, button", node).forEach((el2) => { el2.disabled = true; });
       }
 
+      // ★★★ "allow_overnight 를 끄면 그 아래 세부 조건들은 의미가 없으니
+      // 숨기거나 비활성화해 달라" - showIf 를 쓰는 필드(스키마의 f.showIf =
+      // { path, equals })는 여기서 만든 노드를 모아 뒀다가 아래 _wireShowIf() 에서
+      // 그 조건 필드(체크박스)의 값·변경에 맞춰 보이거나 숨긴다. 범용으로 짜서
+      // 다른 섹션의 다른 bool 필드도 같은 방식으로 재사용할 수 있다.
+      const builtNodes = [];
+
       const autoFields = [];
       section.fields.forEach((f) => {
         const tier = fieldTier(f.path);
@@ -5754,6 +5780,7 @@
         const lab = node.querySelector("label");
         if (lab) lab.insertAdjacentElement("afterbegin", el("span", { class: "tier-badge " + tier, text: tier === "required" ? "필수" : "선택" }));
         _applyFieldLock(node, f);
+        builtNodes.push({ f, node });
         sectionEl.appendChild(node);
       });
       if (autoFields.length) {
@@ -5769,10 +5796,13 @@
           const lab = node.querySelector("label");
           if (lab) lab.insertAdjacentElement("afterbegin", el("span", { class: "tier-badge auto", text: "자동" }));
           _applyFieldLock(node, f);
+          builtNodes.push({ f, node });
           det.appendChild(node);
         });
         sectionEl.appendChild(det);
       }
+
+      _wireShowIf(builtNodes);
 
       // ★★★ "설정에서 거래선택시 현재 매매중이 아닌 건 선택할 수 있어야 한다" - 이제
       // 필드 하나하나를 그 필드가 속한 시장이 거래 중일 때만 잠근다(위 KEY_MARKET 참고).

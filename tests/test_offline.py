@@ -161,6 +161,40 @@ def section_config_validate() -> None:
 
     check("15:20에 끝나면 거부(단일가 시작과 겹침)", not try_load(_mutate_boundary_fail))
 
+    # ★★★ [9-1] 조건부 오버나이트 - 세부값 검증.
+    check(
+        "overnight_min_profit_pct 음수 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", -0.01)),
+    )
+    check(
+        "overnight_min_profit_pct 0.5 초과 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", 0.6)),
+    )
+    check(
+        "overnight_min_profit_pct 0은 허용(경계값 - 본전만 넘으면 연장)",
+        try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", 0)),
+    )
+    check(
+        "★overnight_max_days 는 지금은 1만 지원 - 2는 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_max_days", 2)),
+    )
+    check(
+        "overnight_max_days=1 은 통과",
+        try_load(lambda r: r["exit"].__setitem__("overnight_max_days", 1)),
+    )
+    check(
+        "allow_overnight 이 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("allow_overnight", "yes")),
+    )
+    check(
+        "overnight_skip_before_holiday 가 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_skip_before_holiday", "yes")),
+    )
+    check(
+        "overnight_breakeven_stop 이 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_breakeven_stop", "yes")),
+    )
+
 
 # ━━ 지표 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -26,7 +26,7 @@ from daytrader.ledger import Ledger
 from daytrader.orders import OrderBook
 from daytrader.playbook import Bar, Playbook
 from daytrader.screener import Screener
-from daytrader.ticks import breakeven_pct, round_trip_cost_pct, trade_pnl
+from daytrader.ticks import breakeven_pct, round_to_tick, round_trip_cost_pct, trade_pnl
 from daytrader.timeutil import combine, day_str, hhmm, hhmmss, iso, minutes_between, monday_of, now_kst, parse_dt, won
 
 DEAD_OR_FILLED_OCO_STATES = {"FILLED", "TRIGGERED"}
@@ -200,6 +200,7 @@ class Engine:
         self._stop = False
         self._close_all = False
         self._force_close_deadline = None
+        self._overnight_settled_date = None  # ★ 오늘치 조건부 오버나이트 판단을 이미 내렸는지(날짜 문자열)
         self._loop_count = 0
         self.last_stop_reason: str | None = None  # ★ 정상 종료 사유(예: 오늘은 더 할 매매가 없음)를 화면에 보여주기 위해.
         self.ended_at = None
@@ -1235,6 +1236,238 @@ class Engine:
         risk = replace(self.cfg.risk, take_profit_pct=self.cfg.risk.take_profit_pct * 2)
         return SimpleNamespace(risk=risk, exit=self.cfg.exit, costs=self.cfg.costs)
 
+    # ━━ 조건부 오버나이트 (STAGE: [9-1]) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # exit.allow_overnight 는 "무조건 넘긴다"가 아니라 "이익 중인 포지션만, 최대
+    # exit.overnight_max_days(현재 1일)까지" 넘기는 규칙의 총 스위치다. 판단은
+    # 하루에 한 번, 장 마감(after 국면 진입) 시점에 _settle_overnight() 이 내린다.
+
+    def _oco_cfg_carry(self, pos, breakeven_price: float):
+        """오버나이트로 넘기며 손절선을 본전(breakeven_price)으로 올릴 때 쓸 OCO 설정.
+        익절선은 _oco_cfg() 기준(분할매도 중이면 2배로 멀리 둔 값)을 그대로 두고,
+        손절률만 본전 가격이 그대로 나오도록 거꾸로 계산해 끼워 넣는다(엔진의
+        place_oco() 호출부는 전부 pos.entry_price 에서 stop_loss_pct 만큼 뺀 값을
+        손절가로 쓰므로, 본전가가 나오게 하는 stop_loss_pct 를 역산한다)."""
+        from dataclasses import replace
+        base = self._oco_cfg()
+        stop_pct_equiv = (1 - (breakeven_price / pos.entry_price)) if pos.entry_price else base.risk.stop_loss_pct
+        risk = replace(base.risk, stop_loss_pct=stop_pct_equiv)
+        return SimpleNamespace(risk=risk, exit=base.exit, costs=base.costs)
+
+    def _try_carry_overnight(self, pos):
+        """오버나이트로 넘기며(설정돼 있으면) 손절선을 본전으로 올리고 서버 OCO 를
+        다시 건다. 반환값은 (성공 여부, 본전 손절가 - 손절선을 안 올렸거나 실패하면 None).
+        ★★★ "OCO 재설정에 실패하면 절대 넘기지 않는다(안전 우선)" - 손절선을 못
+        올린 채로 넘기면 최악의 경우 이익이 그대로 손실로 바뀔 수 있다. 실패하면
+        False 를 돌려줘 호출부(_settle_overnight)가 곧바로 청산하게 한다.
+        """
+        if not self.cfg.exit.overnight_breakeven_stop:
+            return True, None
+        be_price = round_to_tick(
+            pos.entry_price * (1 + breakeven_pct(self.cfg.costs.commission_pct, self.cfg.costs.tax_pct)), "up",
+        )
+        if not self.cfg.exit.use_conditional_oco:
+            # 서버 OCO 를 안 쓰면 프로그램 내부 손절만 있다 - 본전가는 돌려주되 실제
+            # 주문은 없다. 프로그램 내부 손절 로직이 pos.entry_price 만 보므로, 이
+            # 경우엔 강제로 손절선을 "올릴" 방법이 마땅치 않다 - 있는 그대로 넘긴다.
+            return True, None
+        if pos.oco_id:
+            cancelled = self.broker.cancel_oco(pos.oco_id)
+            if not cancelled:
+                # 취소 실패 - oco_is_open() 이 True 면 아직 살아있어 안전하게 바꿀 수
+                # 없고, False 면 취소하려는 사이 이미 체결된 경쟁 상태다(이미 서버에서
+                # 처리됐을 수 있다). 두 경우 모두 호출부가 _close_position() 으로
+                # 안전하게 마무리하게 한다 - 그쪽이 이 경쟁 상태를 이미 다룬다.
+                return False, None
+            pos.oco_id = None
+        new_id = self.broker.place_oco(pos, self._oco_cfg_carry(pos, be_price))
+        if new_id is None:
+            return False, None
+        pos.oco_id = new_id
+        return True, be_price
+
+    def _settle_close(self, pos, last: float, reason: str) -> None:
+        """오버나이트로 넘기지 않기로 한(또는 넘길 수 없게 된) 포지션을 청산한다.
+        ★ reason 을 headline/narrative 둘 다에 그대로 쓴다 - 거래 기록(ledger)의
+        reason 필드와 일지(journal)의 "[청산 사유] ..." 가 같은, 구체적인 한국어
+        문장을 담게 하기 위해서다(예: "수익 +0.9% < 기준 2% → 장마감 청산")."""
+        verdict = SimpleNamespace(technique="force_close", headline=reason, id=None, narrative=reason)
+        self._close_position(pos, verdict, last)
+
+    def _settle_overnight(self, now) -> None:
+        """장마감(after 국면) 진입 시 하루에 한 번, 보유 종목별로 "조건부 오버나이트"를
+        판단한다 - run() 의 self._overnight_settled_date 가드가 하루 한 번만 부르게 한다.
+        결정 순서(각 항목에 걸리면 그 자리에서 청산하고 다음 항목은 안 본다):
+          1) 이미 한 번 넘긴 적 있다(pos.carry_date) → 무조건 청산(overnight_max_days=1).
+          2) allow_overnight 자체가 꺼져 있다 → 무조건 청산(예전 방식).
+          3) 휴장(주말·공휴일) 전날이다 → 청산.
+          4) 비용을 뺀 평가손익이 overnight_min_profit_pct 미만이다 → 청산.
+          5) 그 밖(이익 기준을 넘었다) → 넘긴다(성공 시 carry_date 를 오늘로 찍는다).
+        """
+        with self.lock:
+            items = list(self.state.positions.items())
+        if not items:
+            return
+        today = day_str(now)
+        symbols = [s for s, _ in items]
+        prices: dict[str, float] = {}
+        try:
+            price_rows = self.client.prices(symbols)
+            for r in price_rows:
+                s = str(r.get("symbol", "")).zfill(6)
+                p = r.get("price") or r.get("lastPrice")
+                if not s or not p:
+                    continue
+                try:
+                    prices[s] = float(p)
+                except (TypeError, ValueError):
+                    continue
+        except Exception as exc:
+            log.warning("오버나이트 판단용 시세 조회 실패(마지막 가격으로 대신합니다): %s", exc)
+
+        pre_holiday = None  # 지연 계산 - 포지션이 실제로 있을 때만 캘린더를 부른다.
+        changed = False
+
+        for symbol, pos in items:
+            if symbol not in self.state.positions:
+                continue  # 방어적: 그사이 다른 경로로 이미 정리됨
+            last = prices.get(symbol) or pos.last_price or pos.peak_price or pos.entry_price
+
+            if pos.carry_date is not None:
+                reason = "보유 연장 1일 경과 → 장마감 청산"
+                self.journal.write(
+                    "overnight", f"{pos.name} {reason}", symbol=symbol, name=pos.name, theme=pos.theme,
+                    detail={"carry_date": pos.carry_date},
+                )
+                self._settle_close(pos, last, reason)
+                changed = True
+                continue
+
+            if not self.cfg.exit.allow_overnight:
+                self._settle_close(pos, last, "장마감 청산")
+                changed = True
+                continue
+
+            if self.cfg.exit.overnight_skip_before_holiday:
+                if pre_holiday is None:
+                    pre_holiday = session.is_day_before_break(now, self.client)
+                if pre_holiday:
+                    reason = "휴장 전날이라 보유 연장 안 함"
+                    self.journal.write(
+                        "overnight", f"{pos.name} {reason}", symbol=symbol, name=pos.name, theme=pos.theme,
+                    )
+                    self._settle_close(pos, last, reason)
+                    changed = True
+                    continue
+
+            pnl = trade_pnl(pos.entry_price, last, pos.quantity, self.cfg.costs.commission_pct, self.cfg.costs.tax_pct)
+            basis = pos.entry_price * pos.quantity
+            net_pct = (pnl / basis) if basis else 0.0
+            threshold = self.cfg.exit.overnight_min_profit_pct
+
+            if net_pct >= threshold:
+                ok, be_price = self._try_carry_overnight(pos)
+                if ok:
+                    pos.carry_date = today
+                    if be_price is not None:
+                        msg = (
+                            f"{pos.name} 수익 {net_pct*100:+.1f}%(비용 차감) → 1일 보유 연장, "
+                            f"손절선을 본전 {be_price:,.0f}원으로 올림"
+                        )
+                    else:
+                        msg = f"{pos.name} 수익 {net_pct*100:+.1f}%(비용 차감) → 1일 보유 연장"
+                    self.journal.write(
+                        "overnight", msg, symbol=symbol, name=pos.name, theme=pos.theme,
+                        detail={"net_pct": net_pct, "threshold": threshold, "breakeven_price": be_price},
+                    )
+                    changed = True
+                else:
+                    self.journal.write(
+                        "halt", f"{pos.name} 오버나이트 손절선 재설정 실패 - 안전을 위해 청산합니다.",
+                        symbol=symbol, name=pos.name,
+                    )
+                    self._settle_close(pos, last, "오버나이트 손절선 재설정 실패 → 안전 청산")
+                    changed = True
+            else:
+                reason = f"수익 {net_pct*100:+.1f}% < 기준 {threshold*100:.0f}% → 장마감 청산"
+                self.journal.write("overnight", f"{pos.name} {reason}", symbol=symbol, name=pos.name, theme=pos.theme)
+                self._settle_close(pos, last, reason)
+                changed = True
+
+        if changed:
+            self.state.save()
+
+    def _retry_close_pending(self) -> None:
+        """오버나이트 판단 뒤에도 청산이 안 끝난(carry_date 없는) 포지션을 재시도한다 -
+        시세 조회 실패나 매도 실패로 첫 시도가 안 됐을 때를 위한 안전망이다. run() 의
+        force_close_deadline 유예 동안 매 루프 다시 불린다."""
+        with self.lock:
+            items = [(s, p) for s, p in self.state.positions.items() if p.carry_date is None]
+        if not items:
+            return
+        symbols = [s for s, _ in items]
+        try:
+            price_rows = self.client.prices(symbols)
+            self._api_ok()
+        except Exception as exc:
+            self._api_fail(exc)
+            price_rows = []
+        prices = {}
+        for r in price_rows:
+            s = str(r.get("symbol", "")).zfill(6)
+            p = r.get("price") or r.get("lastPrice")
+            if not s or not p:
+                continue
+            try:
+                prices[s] = float(p)
+            except (TypeError, ValueError):
+                continue
+        for symbol, pos in items:
+            last = prices.get(symbol) or pos.last_price or pos.peak_price or pos.entry_price
+            self._settle_close(pos, last, "장마감 청산")
+
+    def _rearm_carried_oco(self) -> None:
+        """★ 서버 OCO 는 당일 유효(broker.place_oco 가 expire_date=오늘로 건다)라,
+        포지션을 오버나이트로 넘기면 그 OCO 는 다음 날 새벽이면 이미 만료돼 있다.
+        새 거래일이 시작될 때(_rollover_if_new_day) 넘긴 포지션(carry_date 있음)의
+        OCO 를 오늘 날짜로 다시 건다 - 안 그러면 보호(손절) 없이 다음 날을 맞는다."""
+        if not self.cfg.exit.use_conditional_oco:
+            return
+        with self.lock:
+            carried = [p for p in self.state.positions.values() if p.carry_date is not None]
+        if not carried:
+            return
+        changed = False
+        for pos in carried:
+            try:
+                if self.cfg.exit.overnight_breakeven_stop:
+                    be_price = round_to_tick(
+                        pos.entry_price * (1 + breakeven_pct(self.cfg.costs.commission_pct, self.cfg.costs.tax_pct)),
+                        "up",
+                    )
+                    oco_cfg = self._oco_cfg_carry(pos, be_price)
+                else:
+                    oco_cfg = self._oco_cfg()
+                if pos.oco_id:
+                    cancelled = self.broker.cancel_oco(pos.oco_id)
+                    if not cancelled and self.broker.oco_is_open(pos.oco_id):
+                        continue  # 어제 것이 아직 살아있다 - 억지로 덮어씌우지 않는다(이중 주문 방지).
+                    pos.oco_id = None
+                new_id = self.broker.place_oco(pos, oco_cfg)
+                if new_id is None:
+                    self.journal.write(
+                        "halt",
+                        f"{pos.name} 오버나이트 포지션의 서버 손절 재등록에 실패했습니다 - "
+                        "프로그램 내부 손절만 작동합니다. 계좌를 직접 확인하세요.",
+                        symbol=pos.symbol, name=pos.name,
+                    )
+                else:
+                    pos.oco_id = new_id
+                changed = True
+            except Exception as exc:
+                log.warning("%s 오버나이트 OCO 재등록 실패: %s", pos.symbol, exc)
+        if changed:
+            self.state.save()
+
     def _rescreen_info(self) -> dict:
         """★★★ "종목 선정이 언제 다시되는지" - 마지막 스크리닝 시각 +
         rescreen_minutes 가 다음 재선정 시각이다. 화면이 이걸 알아야
@@ -1388,6 +1621,7 @@ class Engine:
             self._last_screen = None
             self._last_phase = None
             self._force_close_deadline = None
+            self._overnight_settled_date = None
 
             self.candidates = []
             self.candidate_status = {}
@@ -1401,6 +1635,7 @@ class Engine:
             self.symbol_curves = {}
 
         self.journal.write("session", f"{prev_date} → {today} 로 날짜가 바뀌어 새 세션을 시작합니다.")
+        self._rearm_carried_oco()
         session.reset_holiday_cache()
         if self.event_bus is not None:
             try:
@@ -1544,6 +1779,7 @@ class Engine:
         self._stop = False
         self._close_all = False
         self._force_close_deadline = None
+        self._overnight_settled_date = None  # ★ 오늘치 오버나이트 판단을 이미 내렸는지(날짜 문자열)
 
         while not self._stop:
             self._rollover_if_new_day()
@@ -1593,34 +1829,40 @@ class Engine:
                 self.last_stop_reason = reason
                 break
 
-            # ★★ "after"(장 마감 후)에 보유 종목이 있으면 강제청산 유예·세션
-            # 종료 절차를 반드시 거쳐야 한다. 보유 종목이 없으면(실시간 모드)
-            # weekend/holiday 와 똑같이 다음 개장까지 대기 루프로 빠진다.
-            # ★★★ "오버나이트·장기 보유 허용" - cfg.exit.allow_overnight 가 켜져 있으면
-            # 이 강제청산 유예 절차 자체를 건너뛴다. 포지션은 손절·트레일링·시간손절
-            # 같은 다른 청산 기법으로만 관리되고, 장 마감 강제청산(ForceCloseExit)만
-            # 빠진다 - 다음 개장 때 이어서 관리한다(아래 "장이 닫힘" 대기 루프로 그대로 빠짐).
-            # ★★★ 실제로 겪은 버그 - sim/replay(uses_fake_data)는 하루치 시나리오만
-            # 재생하는 백테스트라 "장 마감 후 포지션이 없으면 끝난다"(윗 블록)는 전제로
-            # 돌아간다. allow_overnight 로 이 유예 절차를 건너뛰면 포지션이 하루를 넘겨도
-            # 안 팔리고, 시나리오에 다음 날 시세가 없어 영원히 청산되지 않아 테스트가
-            # 무한 루프에 빠졌다 - sim/replay 에서는 allow_overnight 여부와 무관하게
-            # 항상 당일 강제청산한다(실거래·모의매매는 그대로 오버나이트 허용).
-            if ses["phase"] == "after" and self.state.positions and (not self.cfg.exit.allow_overnight or self.cfg.uses_fake_data):
-                if self._force_close_deadline is None:
-                    self._force_close_deadline = now + timedelta(minutes=self.cfg.exit.force_close_deadline_min)
-                if now > self._force_close_deadline:
-                    remaining = ", ".join(self.state.positions.keys())
-                    self._halt(
-                        f"장 마감까지 청산하지 못한 종목이 있습니다: {remaining}. "
-                        "오버나이트로 넘어갑니다. 토스 앱에서 직접 확인하세요."
-                    )
-                    break  # ★ 유예 시간이 지나면 세션을 끝낸다. 무한 재시도 금지.
-                self.manage_positions(force_close=True)
-                self.clock.sleep(self.cfg.entry.poll_seconds, should_stop=lambda: self._stop)
-                continue
+            # ★★ "after"(장 마감 후)에 보유 종목이 있으면 "조건부 오버나이트" 판단을
+            # 하루에 한 번 내린다(Engine._settle_overnight) - 이익 중인 포지션만, 휴장
+            # 전날이 아닐 때만, 최대 하루 넘긴다(exit.overnight_*, config.yaml 참고).
+            # 넘기지 않기로 한(또는 allow_overnight 자체가 꺼진) 포지션은 곧바로 청산을
+            # 시도하고, 유예 시간 안에 못 팔면(시세 실패 등) 세션을 접고 사용자에게 알린다.
+            # 넘기기로 한 포지션(pos.carry_date 있음)은 이 유예 절차에서 빠져 아래 대기
+            # 루프로 그대로 흘러간다 - 다음 개장 때 이어서 관리하다 다음 장마감에
+            # 무조건 정리한다(exit.overnight_max_days=1).
+            # ★ sim/replay(uses_fake_data)도 이제 같은 절차를 그대로 탄다 - 다음 날
+            # 몫 시세는 simulator.py 가 시계(clock.now()) 기준으로 계속 만들어 주므로
+            # (SimClient._today_bars), 넘긴 포지션은 다음 거래일에 실제로 청산되면서
+            # 자연히 끝난다 - "시나리오에 다음 날이 없어 무한 루프"였던 예전 우려는
+            # 더 이상 해당하지 않는다(sim 모드로 여러 날을 실제로 돌려 검증한다).
+            if ses["phase"] == "after" and self.state.positions:
+                if self._overnight_settled_date != ses["date"]:
+                    self._settle_overnight(now)
+                    self._overnight_settled_date = ses["date"]
 
-            if not ses["live"]:  # weekend, holiday, 장 마감 후(보유 종목 없음 또는 allow_overnight) - 다음 개장까지 대기
+                pending = [s for s, p in self.state.positions.items() if p.carry_date is None]
+                if pending:
+                    if self._force_close_deadline is None:
+                        self._force_close_deadline = now + timedelta(minutes=self.cfg.exit.force_close_deadline_min)
+                    if now > self._force_close_deadline:
+                        self._halt(
+                            f"장 마감까지 청산하지 못한 종목이 있습니다: {', '.join(pending)}. "
+                            "오버나이트로 넘어갑니다. 토스 앱에서 직접 확인하세요."
+                        )
+                        break  # ★ 유예 시간이 지나면 세션을 끝낸다. 무한 재시도 금지.
+                    self._retry_close_pending()
+                    self.clock.sleep(self.cfg.entry.poll_seconds, should_stop=lambda: self._stop)
+                    continue
+                # 남은 포지션이 전부 넘기기로 한 것들뿐이다 - 아래 대기 루프로 흘러간다.
+
+            if not ses["live"]:  # weekend, holiday, 장 마감 후(보유 종목 없음 또는 오버나이트로 넘김) - 다음 개장까지 대기
                 for c in self.candidates:
                     self.candidate_status[c.symbol] = ses["label"]
                 # ★ 장이 닫혀도 살아 있다는 것은 알려야 한다 - 안 그러면 화면이

@@ -1675,13 +1675,34 @@ class TimeStopExit(ExitBase):
         no_progress_minutes = self._get("no_progress_minutes", 0)
         held = ctx.held_minutes
 
+        # ★★★ "조건부 오버나이트로 넘긴 포지션이 다음날 개장하자마자 시간손절에
+        # 걸린다" - held(ctx.held_minutes)는 달력 기준 분(timeutil.minutes_between)
+        # 이라, 밤새 쉰 시간(장 마감~다음 개장)까지 그대로 더해진다. 예를 들어
+        # 14:00에 사서 다음날 09:00에 다시 평가하면 held 는 벌써 1140분이라,
+        # max_hold_minutes 를 짧게 잡은 설정이면 개장 직후 곧바로 잘릴 수 있다.
+        # 정확히 하려면 "거래 시간만 센다"(장중 분만 누적)로 다시 짜야 하는데,
+        # 이 포지션은 어차피 exit.overnight_max_days(현재 1일)에 따라 다음
+        # 장마감(engine.py Engine._settle_overnight)에 무조건 청산되므로, 그보다
+        # 더 정교하게 시간손절을 적용할 실익이 없다. 그래서 더 단순한 규칙을
+        # 택했다: 오버나이트로 한 번 넘긴 포지션(pos.carry_date 있음)은 시간손절
+        # 대상에서 완전히 뺀다. ★ 트레이드오프: max_hold_minutes 를 아주 짧게 잡아
+        # "당일이든 아니든 시간이 되면 무조건 자른다"고 기대하는 설정이라면, 이
+        # 예외가 그 기대를 깬다 - 대신 다음 장마감에는 반드시(무조건) 청산되므로
+        # 실제로 더 길게 물리는 일은 없다.
+        carried = getattr(pos, "carry_date", None) is not None
+        held_for_check = 0.0 if carried else held
+
         terms = [mk_term(
-            "held", "보유 시간", float(held), float(max_hold), ">=", unit="분", required=False,
-            explain=f"보유 시간 {fmt_val(held,'분')}이 최대 보유 {fmt_val(max_hold,'분')}을 넘었습니다."
-            if held >= max_hold else f"보유 시간 {fmt_val(held,'분')}으로 아직 여유가 있습니다.",
+            "held", "보유 시간", float(held_for_check), float(max_hold), ">=", unit="분", required=False,
+            explain="오버나이트로 연장된 포지션이라 다음 장마감까지 시간손절을 쉽니다(그 전에 무조건 청산됩니다)."
+            if carried
+            else (
+                f"보유 시간 {fmt_val(held,'분')}이 최대 보유 {fmt_val(max_hold,'분')}을 넘었습니다."
+                if held >= max_hold else f"보유 시간 {fmt_val(held,'분')}으로 아직 여유가 있습니다."
+            ),
         )]
 
-        if no_progress_minutes > 0:
+        if no_progress_minutes > 0 and not carried:
             gain = (last - pos.entry_price) / pos.entry_price if pos.entry_price else NAN
             no_progress = held >= no_progress_minutes and not isnan(gain) and gain < 0.01
             terms.append(mk_term(

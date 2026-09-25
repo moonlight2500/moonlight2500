@@ -411,6 +411,27 @@
           hint: "켜면 손절·익절 주문이 증권사 서버에도 등록됩니다. 프로그램이 꺼져도 손절이 살아있습니다." },
         { path: "exit.max_hold_minutes", label: "최대 보유 시간", kind: "num", min: 5, max: 300, step: 5, suffix: "분",
           hint: "데이트레이딩 원칙상 포지션을 오래 끌지 않기 위한 상한입니다." },
+        { path: "exit.allow_overnight", label: "이익 중인 포지션 오버나이트 허용", kind: "bool",
+          hint: "켜면 장 마감 시각에도 무조건 청산하지 않고, 아래 조건을 만족하는 '이익 중인' 포지션만 "
+            + "다음 거래일로 최대 1일 넘깁니다. 조건에 못 미치는 포지션과 손실 중인 포지션은 이익 여부와 "
+            + "무관하게 그대로 당일 청산됩니다. 끄면 예전처럼 장 마감에 전부 청산합니다." },
+        { path: "exit.overnight_min_profit_pct", label: "오버나이트 최소 수익 기준", kind: "pct", min: 0, max: 50, step: 0.5, suffix: "%",
+          showIf: { path: "exit.allow_overnight", equals: true },
+          hint: "장 마감 시점 평가손익이 수수료·거래세를 뺀 뒤에도 이 비율 이상이어야 넘깁니다. "
+            + "못 미치면(손실 포함) 그날 안에 팝니다. 기본 2%." },
+        { path: "exit.overnight_max_days", label: "최대 연속 오버나이트 일수", kind: "num", min: 1, max: 1, step: 1, suffix: "일",
+          showIf: { path: "exit.allow_overnight", equals: true },
+          hint: "한 번 넘긴 포지션을 다시 넘길 수 있는 최대 일수입니다. 지금은 1일만 지원합니다 - "
+            + "그 이상 연속으로 들고 가는 것은 데이트레이딩이 아니라 스윙 매매의 영역이라 이 엔진에서는 다루지 않습니다." },
+        { path: "exit.overnight_skip_before_holiday", label: "휴장 전날은 연장 안 함", kind: "bool",
+          showIf: { path: "exit.allow_overnight", equals: true },
+          hint: "다음 거래일이 내일이 아닌 날(주말·공휴일 앞 마지막 거래일)에는 이익이 충분해도 넘기지 않고 "
+            + "당일 청산합니다 - 쉬는 날 동안 뉴스·급락에 그대로 노출되는 기간을 줄입니다." },
+        { path: "exit.overnight_breakeven_stop", label: "연장 시 손절선을 본전으로 올림", kind: "bool",
+          showIf: { path: "exit.allow_overnight", equals: true },
+          hint: "넘기기로 한 포지션은 손절선을 평균 매수가(본전, 비용 포함)로 올리고 서버 OCO를 그 값으로 "
+            + "다시 겁니다 - 이익 중이던 포지션이 다음날 손실로 마감되는 것을 막습니다. 재설정이 실패하면 "
+            + "안전을 위해 넘기지 않고 그 자리에서 청산합니다. 끄면 손절선은 원래 값 그대로 두고 수량만 넘깁니다." },
       ],
     },
     {
