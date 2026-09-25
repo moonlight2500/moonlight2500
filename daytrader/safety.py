@@ -286,9 +286,12 @@ class Diff:
     action: str
 
 
-def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=None) -> list:
+def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=None, broker=None) -> list:
     """도는 중 계좌와 상태를 맞춘다. 계좌가 진실이다.
     불일치를 조용히 고치지 않는다 - 원장·일지·state/reconcile.jsonl 에 남긴다.
+    ★ broker 를 넘기면 qty_mismatch 때 서버 OCO(조건부 손절/익절)도 새 수량으로
+    다시 건다(engine.py 의 청산/분할매도가 쓰는 취소 후 재등록 패턴과 동일).
+    broker 가 없으면(호출부가 안 넘기면) 예전처럼 내부 수량만 맞춘다.
     """
     last_prices = last_prices or {}
     diffs: list[Diff] = []
@@ -339,12 +342,51 @@ def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=No
             journal.write("reconcile", f"{symbol} 유령 포지션 정리: {diff.detail}", symbol=symbol, name=pos.name)
 
         elif account_qty != pos.quantity:
-            diff = Diff(
-                kind="qty_mismatch", symbol=symbol, name=pos.name, state_qty=pos.quantity,
-                account_qty=account_qty, detail=f"보유 수량이 어긋났습니다 (내부 {pos.quantity} vs 계좌 {account_qty}).",
-                action="계좌 수량으로 맞춤",
-            )
+            old_qty = pos.quantity
+            detail = f"보유 수량이 어긋났습니다 (내부 {old_qty} vs 계좌 {account_qty})."
+            action = "계좌 수량으로 맞춤"
             pos.quantity = account_qty
+
+            # ★★★ 실제로 겪은 버그 - 수량만 내부적으로 맞추고 서버에 걸어 둔
+            # OCO(조건부 손절/익절)는 옛 수량 그대로 방치했다. 부분체결로 수량이
+            # 줄면 옛 수량으로 건 OCO 가 계좌에 없는 수량을 팔려다 거부될 수
+            # 있고, 수량이 늘면 옛(적은) 수량만 커버해 나머지가 무방비로 남는다.
+            # engine.py 청산/분할매도(scale-out)가 쓰는 것과 같은 패턴 -
+            # 취소 후 새 수량으로 재등록 - 을 쓴다. 실패하면 조용히 넘어가지
+            # 않고 일지(halt)·원장(diff.detail)·화면(reconcile_alerts)에 남긴다.
+            if broker is not None and pos.oco_id:
+                try:
+                    cancelled = broker.cancel_oco(pos.oco_id)
+                    if not cancelled and broker.oco_is_open(pos.oco_id):
+                        detail += " 서버 조건부 주문(OCO)을 취소하지 못해 새 수량으로 다시 걸지 못했습니다 - 직접 확인하세요."
+                        journal.write(
+                            "halt",
+                            f"{symbol} 계좌 대조로 수량이 {old_qty}->{account_qty}로 바뀌었지만 "
+                            "서버 OCO 를 취소하지 못해 재등록하지 못했습니다. 옛 수량으로 걸린 주문이 그대로 남아 있습니다.",
+                            symbol=symbol, name=pos.name,
+                        )
+                    else:
+                        new_oco_id = broker.place_oco(pos, cfg)
+                        pos.oco_id = new_oco_id
+                        if new_oco_id is None:
+                            detail += " 서버 조건부 주문(OCO)을 새 수량으로 다시 걸지 못해 프로그램 내부 손절만 작동합니다."
+                            journal.write(
+                                "halt",
+                                f"{symbol} 계좌 대조 후 OCO 재등록에 실패했습니다 - 프로그램 내부 손절만 작동합니다.",
+                                symbol=symbol, name=pos.name,
+                            )
+                        else:
+                            action += " + 서버 OCO 재등록"
+                except Exception as exc:
+                    detail += f" 서버 조건부 주문(OCO) 재등록 중 오류: {exc}"
+                    journal.write(
+                        "halt", f"{symbol} 계좌 대조 후 OCO 재등록 중 오류: {exc}", symbol=symbol, name=pos.name,
+                    )
+
+            diff = Diff(
+                kind="qty_mismatch", symbol=symbol, name=pos.name, state_qty=old_qty,
+                account_qty=account_qty, detail=detail, action=action,
+            )
             diffs.append(diff)
             journal.write("reconcile", diff.detail, symbol=symbol, name=pos.name)
 

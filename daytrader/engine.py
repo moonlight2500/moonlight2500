@@ -1245,7 +1245,10 @@ class Engine:
         from daytrader.safety import reconcile as do_reconcile
         with self.lock:
             last_prices = {s: p.entry_price for s, p in self.state.positions.items()}
-        diffs = do_reconcile(self.client, self.state, self.cfg, self.journal, self.ledger, last_prices=last_prices)
+        diffs = do_reconcile(
+            self.client, self.state, self.cfg, self.journal, self.ledger,
+            last_prices=last_prices, broker=self.broker,
+        )
         if diffs:
             with self.lock:
                 self.reconcile_alerts.extend(d.detail for d in diffs)

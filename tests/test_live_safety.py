@@ -366,6 +366,60 @@ def test_reconcile() -> None:
         reconcile(client3, state3, cfg, journal, ledger)
         check("★수량 불일치를 계좌 기준으로 보정(20->15)", state3.positions["005930"].quantity == 15)
 
+        # ★★★ 실제로 겪은 버그 - 수량만 내부적으로 맞추고 서버 OCO(조건부
+        # 손절/익절)는 옛 수량 그대로 방치했다. broker 를 넘기면 engine.py
+        # 청산/분할매도와 같은 패턴(취소 후 재등록)으로 서버 OCO 도 새
+        # 수량으로 다시 걸어야 한다.
+        from daytrader.broker import LiveBroker
+
+        state4 = _FakeState()
+        state4.positions["005930"] = Position(
+            symbol="005930", name="삼성전자", theme="t", quantity=20, entry_price=10000,
+            entry_time=now_kst(), peak_price=10500, oco_id="existing-oco", entry_volume=1000,
+            verdict_id="v1", why="", technique="fixed",
+        )
+        client4 = FakeToss()
+        client4.holdings_data = [{"symbol": "005930", "quantity": 15}]
+        # ★ id 를 FakeToss.create_oco() 가 만드는 형식(oco-N)과 겹치지 않게 둔다 -
+        # 겹치면 재등록으로 새로 생긴 주문이 옛 주문과 같은 id 로 보여 테스트가
+        # 착각할 수 있다.
+        client4.conditional_orders_data = [{"conditionalOrderId": "existing-oco", "status": "OPEN", "symbol": "005930"}]
+        broker4 = LiveBroker(cfg, client4, _dummy_book())
+
+        diffs4 = reconcile(client4, state4, cfg, journal, ledger, broker=broker4)
+        check("수량은 여전히 계좌 기준으로 보정됨(20->15)", state4.positions["005930"].quantity == 15)
+        check(
+            "★수량 불일치 시 broker 를 넘기면 서버 OCO 도 새 수량으로 재등록",
+            state4.positions["005930"].oco_id is not None and state4.positions["005930"].oco_id != "existing-oco",
+            str(state4.positions["005930"].oco_id),
+        )
+        old_oco = next(o for o in client4.conditional_orders_data if o["conditionalOrderId"] == "existing-oco")
+        check("옛 OCO는 취소됨", old_oco["status"] == "CANCELLED")
+        new_ocos = [o for o in client4.conditional_orders_data if o["conditionalOrderId"] != "existing-oco"]
+        check("새 OCO가 생성됨", len(new_ocos) == 1 and new_ocos[0]["status"] == "OPEN")
+        mismatch_diff4 = next(d_ for d_ in diffs4 if d_.kind == "qty_mismatch")
+        check("action에 OCO 재등록이 기록됨(조용히 넘기지 않음)", "OCO" in mismatch_diff4.action, mismatch_diff4.action)
+
+        # OCO 취소가 실패하면(서버 주문이 여전히 살아있다) - 조용히 넘어가지 않고
+        # 옛 OCO를 그대로 둔 채(이중 주문 방지) 실패를 detail·journal(halt)에 남긴다.
+        state5 = _FakeState()
+        state5.positions["005930"] = Position(
+            symbol="005930", name="삼성전자", theme="t", quantity=20, entry_price=10000,
+            entry_time=now_kst(), peak_price=10500, oco_id="existing-oco-2", entry_volume=1000,
+            verdict_id="v1", why="", technique="fixed",
+        )
+        client5 = FakeToss()
+        client5.holdings_data = [{"symbol": "005930", "quantity": 15}]
+        client5.conditional_orders_data = [{"conditionalOrderId": "existing-oco-2", "status": "OPEN", "symbol": "005930"}]
+        client5.cancel_ok = False  # 취소 자체가 실패한다.
+        broker5 = LiveBroker(cfg, client5, _dummy_book())
+
+        diffs5 = reconcile(client5, state5, cfg, journal, ledger, broker=broker5)
+        check("취소 실패 시 옛 OCO를 그대로 둠(이중 매도/이중 주문 방지)",
+              state5.positions["005930"].oco_id == "existing-oco-2")
+        mismatch_diff5 = next(d_ for d_ in diffs5 if d_.kind == "qty_mismatch")
+        check("★취소 실패를 조용히 넘기지 않고 detail에 남김", "취소하지 못해" in mismatch_diff5.detail, mismatch_diff5.detail)
+
 
 # ━━ 고아 주문 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
