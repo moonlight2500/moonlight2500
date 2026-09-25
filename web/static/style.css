@@ -1,0 +1,1786 @@
+/* daytrader web/style.css — 프레임워크 없는 순수 CSS.
+   장식은 절제하고 여백과 타이포그래피로 구분한다. */
+
+/* ★★★ "글씨체도 세련되고 깔끔한 걸로" - --sans 는 전부터 Pretendard 를 1순위로
+   적어 뒀지만 실제로 불러오는 @font-face 가 없어서, Pretendard 가 없는 PC(대부분)는
+   전부 시스템 기본 글꼴(맑은 고딕 등)로 조용히 대체되고 있었다. 가변 폰트 하나를
+   web/static/fonts 에 내려받아 두고(오프라인에서도 뜨도록 - 이 앱은 인터넷 없이도
+   켜지는 로컬 데스크톱 앱이다) 실제로 불러온다. font-family 이름을 "Pretendard"로
+   선언해서 --sans 쪽은 손댈 필요가 없다. */
+@font-face {
+  font-family: "Pretendard";
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+  src: url("./fonts/PretendardVariable.woff2") format("woff2");
+}
+
+html {
+  transition: background-color 0.15s ease;
+}
+body {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+:root {
+  --paper: #f5f5f2;
+  --card: #fffffe;
+  --ink: #1a1d21;
+  /* ★★★ 다크모드 추가 후 발견한 문제 - button.b/.toast/.seg button.active 는
+     "배경 var(--ink) + 글자 흰색 고정"이었다. 다크모드에서 --ink 가 밝은 색으로
+     뒤집히면 밝은 배경에 흰 글자가 남아 거의 안 보였다. var(--ink) 를 배경으로 쓸 때
+     그 위에 놓는 글자색은 항상 이 토큰을 쓴다 - 라이트에서는 흰색, 다크에서는
+     어두운 색으로 같이 뒤집힌다. */
+  --ink-contrast: #ffffff;
+  /* ★ 6e7178 은 --paper 배경에서 대비 4.47:1 로 WCAG AA 본문 기준(4.5)에
+     살짝 못 미쳤다. 힌트·라벨·표 머리글 등 거의 모든 보조 텍스트에 쓰이는
+     색이라 이 정도 차이도 실제 가독성에 영향을 준다 - 6.2:1 로 낮췄다. */
+  --muted: #585b61;
+  --faint: #9b9da2;
+  --rule: #dcdbd5;
+  --rule2: #eceae4;
+
+  --rise: #c0392b; /* 상승·수익 = 빨강 (국내 시세 관례) */
+  --fall: #14539a; /* 하락·손실 = 파랑 */
+
+  /* 종목 구분색 6칸 — '손익 방향'이 아니라 '어느 종목인가'를 나타낸다.
+     상승빨강·하락파랑·잉크(#1a1d21)와 일부러 멀리 떨어뜨린 값이다.
+     가까우면 종목색을 손익 방향으로 오독한다. 색각(protan/deutan)에서도
+     서로, 그리고 방향색과 구분되는지 확인하고 골랐다 — 모든 쌍 색각
+     ΔE 9.5 이상 / 정상시야 19.3 이상. 값과 순서를 손대지 마라.
+     앞자리일수록 서로 멀다 — 보유는 보통 2~3종목이라 1·2번이 가장 자주
+     함께 보이기 때문이다. */
+  --series1: #72b426;
+  --series2: #951973;
+  --series3: #ec6ba6;
+  --series4: #20adde;
+  --series5: #7864d7;
+  --series6: #008362;
+  --series-etc: #6e7178; /* 7번째부터. 새 색을 만들어 내지 않는다 */
+
+  /* 상태 배너 색 (.band[data-state]) */
+  --halt: #96690f;
+  --live: #7b1e1e;
+  --idle: #2c3036;
+  --paper-mode: #2a4a3f;
+  --sim: #3c4a63;
+  --web: #35544e;
+  --replay: #4a4360;
+  --degraded: #8a4b12;
+
+  --sans: "Pretendard", -apple-system, "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  --mono: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+
+  /* ★★★ 간격 스케일 - 화면이 어수선해 보이던 주원인은 여백이 4·5·6·8·9·
+     10·12·14·16px 로 12종류나 흩어져 있었던 것이다. 요소마다 2px 씩
+     어긋나면 개별로는 안 보여도 전체로는 정렬이 무너져 보인다.
+     4px 배수 5단계로 줄여 눈에 리듬이 생기게 한다. 새 값을 만들지 말고
+     반드시 이 중에서 고른다. */
+  --s1: 4px;    /* 붙은 요소 사이 (라벨과 값) */
+  --s2: 8px;    /* 같은 묶음 안 (카드 안 항목들) */
+  --s3: 12px;   /* 묶음 사이 (카드 안 섹션) */
+  --s4: 16px;   /* 카드 사이 */
+  --s5: 24px;   /* 화면 구역 사이 */
+
+  --stickh: 0px; /* JS 가 .stickytop 높이를 재서 넣는다 */
+  --radius: 12px;
+
+  /* ★ 입체감 스케일 - 카드 그림자가 0.04 알파로 거의 안 보여 화면이 밋밋했다.
+     3단계로 정리해 카드(sm)·떠 있는 패널(md)·모달/토스트(lg)를 구분한다.
+     간격 스케일과 같은 원칙 - 새 그림자 값을 만들지 말고 이 중에서 고른다. */
+  --shadow-sm: 0 1px 2px rgba(26, 29, 33, 0.05), 0 1px 1px rgba(26, 29, 33, 0.04);
+  --shadow-md: 0 4px 12px rgba(26, 29, 33, 0.08), 0 1px 2px rgba(26, 29, 33, 0.05);
+  --shadow-lg: 0 12px 32px rgba(26, 29, 33, 0.16), 0 2px 8px rgba(26, 29, 33, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14161a;
+    --card: #1e2126;
+    --ink: #e8e9ea;
+    --ink-contrast: #14161a;
+    --muted: #a8abb2;
+    --faint: #6b6e75;
+    --rule: #2c2f35;
+    --rule2: #23262b;
+
+    --rise: #e2574a;
+    --fall: #4f8fd4;
+
+    --series1: #8bd83c;
+    --series2: #d94bb0;
+    --series3: #ff8fc0;
+    --series4: #4dc8f5;
+    --series5: #9c8ff0;
+    --series6: #24b98c;
+    --series-etc: #9799a0;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #14161a;
+  --card: #1e2126;
+  --ink: #e8e9ea;
+  --ink-contrast: #14161a;
+  --muted: #a8abb2;
+  --faint: #6b6e75;
+  --rule: #2c2f35;
+  --rule2: #23262b;
+
+  --rise: #e2574a;
+  --fall: #4f8fd4;
+
+  --series1: #8bd83c;
+  --series2: #d94bb0;
+  --series3: #ff8fc0;
+  --series4: #4dc8f5;
+  --series5: #9c8ff0;
+  --series6: #24b98c;
+  --series-etc: #9799a0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  /* ★ 숫자가 흔들리면 실시간 화면이 읽기 어렵다 */
+  font-variant-numeric: tabular-nums;
+}
+
+html {
+  /* ★★★ 실제로 겪은 버그 - 개별 컴포넌트(strip·표·카드 등)마다
+     overflow-x:auto/min-width:0 을 아무리 꼼꼼히 달아도, 딱 하나라도
+     빠뜨린 자손이 있으면 그 요소가 뷰포트 자체를 밀어서 화면 전체가
+     우측으로 흘렀다. html 에 최종 안전망을 걸어, 어떤 자손이 넓어지든
+     뷰포트 자체는 절대 가로로 안 늘어나게 한다(넘치는 부분은 그
+     자손 내부에서만 잘리거나 스크롤된다). body 가 아니라 html 에 거는
+     이유 - body 에 걸면 overflow-y 도 강제로 스크롤 컨테이너가 되어
+     .stickytop(position:sticky) 가 body 기준으로 바뀌면서 깨질 수 있다.
+  */
+  overflow-x: hidden;
+}
+
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+}
+
+/* ★ 포커스 링 - 브라우저 기본 파란 테두리는 --fall(손실 파랑)과 헷갈릴 수 있어
+   중립적인 잉크색 링으로 통일한다. 마우스 클릭에는 안 뜨고(:focus-visible)
+   키보드 포커스에만 떠서 화면이 지저분해지지 않는다. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgba(26, 29, 33, 0.55);
+  outline-offset: 2px;
+}
+
+/* ★ 스크롤바 - 브라우저 기본 회색 막대 대신 은은한 얇은 막대로.
+   내용이 없을 땐 아예 안 보이다가(투명) 스크롤 영역 위에서만 옅게 드러난다. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 var(--s2);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+section h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin: var(--s2) 0 var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ━━ 상단 고정 영역 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ★★ 배너와 메뉴에 각각 sticky·top:0 을 주지 마라. 같은 자리를 두고
+   겹치는데 배너 z-index 가 높아 메뉴가 그 뒤로 밀려, 스크롤하면 메뉴가
+   사라진다. 높이를 재서 top 을 맞추려 들지도 마라 — 배너 높이는 상태
+   문구와 창 너비에 따라 달라져 계속 어긋난다. 한 상자로 묶으면 잴 일이
+   없다. */
+.stickytop {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.band,
+.group-nav,
+.sub-nav {
+  /* 각자 position 을 주지 않는다 - .stickytop 이 통째로 고정한다 */
+  width: 100%;
+}
+
+.band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  /* ★ 노치가 있는 기기에서 상태 바가 화면 맨 위 배너와 겹치지 않게
+     safe-area 만큼 위쪽 여백을 더한다 - 지원 안 하는 기기는 0 이라 그대로. */
+  padding: calc(var(--s2) + env(safe-area-inset-top, 0px)) var(--s4) var(--s2);
+  color: #fff;
+  background: var(--idle);
+  font-size: 13px;
+}
+
+.band[data-state="sim"] { background: var(--sim); }
+.band[data-state="replay"] { background: var(--replay); }
+.band[data-state="web"] { background: var(--web); }
+.band[data-state="paper"] { background: var(--paper-mode); }
+.band[data-state="live"] { background: var(--live); }
+.band[data-state="halt"] { background: var(--halt); }
+.band[data-state="idle"] { background: var(--idle); }
+.band[data-state="degraded"] {
+  background: var(--degraded);
+  animation: band-blink 2s ease-in-out infinite;
+}
+
+@keyframes band-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.band .band-title {
+  font-weight: 600;
+}
+
+.band .band-meta {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+#theme-toggle,
+#currency-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.85;
+}
+#theme-toggle:hover,
+#currency-toggle:hover {
+  opacity: 1;
+}
+/* ★ "원달러 아이콘의 타원형 박스를 없애고" - 알약형 배경·테두리를 없애 #theme-toggle 과
+   같은 맨 아이콘 스타일로 되돌린다. "$"/"₩" 글자만으로는 옅어 보일 수 있어 굵게(700)
+   해서 최소한의 대비만 남긴다. */
+#currency-toggle {
+  font-weight: 700;
+  color: #fff;
+}
+
+/* ━━ 그룹 탭 - 아이콘(위) + 라벨(아래) 타일. 앱 런처/모바일 탭바에
+   가까운 인상을 주는 재디자인 - 예전엔 가로 알약형 버튼이었다. ━━━━━━━━ */
+.group-nav {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s1);
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  padding: var(--s2) var(--s2) 0;
+  overflow-x: auto;
+}
+
+.group-tab {
+  flex: 1 1 0;
+  min-width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: var(--s2) var(--s2) var(--s2);
+  border-radius: 12px 12px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.group-tab-icon {
+  display: inline-flex;
+  line-height: 1;
+}
+
+.group-tab-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.group-tab-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.group-tab:hover {
+  background: var(--rule2);
+}
+
+.group-tab.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 -1px 8px rgba(26, 29, 33, 0.06);
+}
+
+.group-tab.active::after {
+  /* ★ 세그먼트 배경 대신, 활성 탭 아래에 굵은 밑줄 인디케이터를 그린다 -
+     타일 모양과 어울리는 표시 방식이다. */
+  content: "";
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--ink);
+}
+
+/* ━━ 하위 탭 - 선택된 그룹 안의 화면들, 역시 독립 버튼 모양 ━━━━━━━━━━━━━ */
+.sub-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+  padding: var(--s2) var(--s3);
+  overflow-x: auto;
+}
+
+.sub-nav a {
+  display: block;
+  flex: 0 0 auto;
+  padding: var(--s2) var(--s3);
+  text-decoration: none;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.sub-nav a:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.sub-nav a.active {
+  background: var(--rise);
+  color: #fff;
+  border-color: var(--rise);
+  box-shadow: 0 2px 6px rgba(192, 57, 43, 0.28);
+}
+
+.nav-toggle {
+  display: none;
+}
+
+/* ━━ 지표 스트립 (6칸) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ★★★ 요청대로 항목을 재구성하면서 8칸이 됐다(매수·매도·손익·익절·
+   손절·승률·보유·평가손익). 기존 .strip 은 6칸 고정이라 그대로 두면
+   어긋난다. 좁은 화면에서는 자동으로 줄바꿈되도록 auto-fit 을 쓴다. */
+.strip.strip-wide {
+  grid-template-columns: repeat(8, 1fr);
+}
+
+/* ★★★ "하단바의 위치가 모두 일정하게" - 예전엔 값 아래 보조 라벨(건수)이
+   있는 셀만 한 줄이 더 생겨서 스파크라인 높이가 셀마다 들쭉날쭉했다.
+   셀을 세로 flex 로 만들고 스파크라인을 margin-top:auto 로 바닥에 붙여,
+   내용 길이와 무관하게 항상 같은 자리에 오게 한다. */
+.strip.strip-wide .cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.strip.strip-wide .cell .spark {
+  margin-top: auto;
+}
+
+.strip .cell .label.sub {
+  font-size: 11px;
+  opacity: 0.75;
+  min-height: 1.2em;   /* ★ 보조 라벨이 없는 셀도 같은 높이를 차지하게. */
+}
+
+@media (max-width: 1100px) {
+  .strip.strip-wide {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+}
+
+/* ★★★ 지표를 매매 / 성과 / 보유 세 묶음으로 그룹화 - 각 묶음에 제목을 붙이고
+   폭은 셀 수(2·4·2)에 비례해 나눈다(JS 가 flex 값을 셀 수로 넣는다). */
+.strip-groups {
+  display: flex;
+  gap: var(--s3);
+  align-items: stretch;
+}
+
+.strip-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.strip-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 4px 2px;
+}
+
+.strip-group > .strip {
+  flex: 1;
+}
+
+.strip.strip-wide.strip-in-group {
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .strip-groups {
+    flex-direction: column;
+  }
+  .strip-group {
+    flex: none !important;
+  }
+  .strip.strip-wide.strip-in-group {
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  }
+}
+
+.strip .cell {
+  background: var(--card);
+  padding: var(--s3) var(--s3);
+  /* ★★★ 실제로 겪은 버그 - grid item 기본 min-width 는 auto(콘텐츠
+     크기)라서, "평가손익(고점 기준)"처럼 긴 라벨이 들어오면 이 셀이
+     1fr 트랙보다 넓어지려 하고, strip 전체가 화면 우측으로 흘러넘친다.
+     0 으로 오버라이드해서 반드시 트랙 폭 안에서 줄바꿈/축소되게 한다. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.strip .cell .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strip .cell .label {
+  font-size: 12px;
+  color: var(--muted);
+  /* ★ uppercase·letter-spacing 을 뺐다 - 한글에는 대문자 변환이 아무
+     효과가 없으면서 자간만 벌어져 글자가 흩어져 보였다. */
+}
+
+.strip .cell .value {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 2px;
+  /* ★ 숫자 폭 고정 - 값이 갱신될 때마다 자릿수 폭이 달라지면 칸이
+     미세하게 흔들려 화면이 불안해 보인다. */
+  font-variant-numeric: tabular-nums;
+  /* ★ "계속 숫자 뒤에가 짤리거나 단위가 아랫줄로 나와. 한줄에 표현되게 수정" -
+     예전엔 원화 환산을 "\n" 으로 둘째 줄에 내리던 기능이 있어 pre-line 을 썼지만,
+     그 기능은 없어졌다(달러/원 중 하나만 보여주는 토글로 대체됨 - _usdWithKrw 등
+     참고). 지금은 값이 항상 한 줄짜리 문자열이라 pre-line 을 두면 셀 폭을 넘길 때
+     그냥 줄바꿈만 일으킨다 - nowrap 으로 되돌린다(칸이 overflow:hidden 이라 넘치면
+     잘리므로, 모바일에서는 아래 clamp() 로 자릿수가 늘어도 웬만하면 한 줄에 들어오게
+     글자 크기를 화면 폭에 맞춰 줄인다). */
+  white-space: nowrap;
+}
+
+.strip .cell .value.rise { color: var(--rise); }
+.strip .cell .value.fall { color: var(--fall); }
+
+/* ━━ 레이아웃 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+  min-width: 0;
+  /* ★★ 기본값(stretch)이면 카드 하나가 짧아도 옆 카드 높이에 맞춰 억지로
+     늘어나면서 카드 안에 의미 없는 빈 공간이 생긴다(예: 후보가 1~2개뿐일
+     때 포지션 카드보다 짧아서 오른쪽 아래가 텅 비어 보이는 문제 - 실제로
+     겪음). 각 카드가 자기 콘텐츠 높이만큼만 차지하게 한다.
+  */
+  align-items: start;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s3) var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+  /* ★★ 연계 테스트 결과표(컬럼이 많은 DataGrid)처럼 넓은 내용이 카드
+     안에 들어오면, min-width 기본값(auto)이 콘텐츠 크기를 따라가면서
+     이 카드를 담은 .cols 그리드 트랙 자체가 늘어나 화면 전체가 깨진다
+     (실제로 겪은 문제). 카드 자체는 트랙 크기를 지키고, 넘치는 내용은
+     카드 안에서만 가로 스크롤되게 한다.
+  */
+  min-width: 0;
+  /* ★★★ 실제로 겪은 문제 - 여기 overflow-x: auto 가 있어서 긴 문장이
+     카드 밖으로 밀려나며 잘려 보였다("모의매매" → "의매매",
+     "보유 중인 것만 관리하고…" → "보유 중인 것만 ."). 넓은 표는 이제
+     .hscroll 컨테이너가 따로 처리하므로 카드에서는 뺀다.
+     ★ 긴 글은 잘리지 말고 줄바꿈돼야 한다 - 잘린 글은 뜻이 달라진다. */
+  overflow-wrap: anywhere;
+}
+
+/* ★ 카드 안의 설명·안내 문장은 반드시 줄바꿈된다 - 한 글자라도 잘리면
+   안 되는 내용이다(모드 이름, 장 상태 안내, _controlSummary 의 "현금 · 보유 ·
+   오늘 · 청산" 요약 등). pre-line 은 문자열에 실제 "\n" 이 있으면 그대로
+   줄바꿈으로 보여주고, 없으면 normal 처럼 공백 기준으로 줄바꿈한다 - 지금은
+   currency-toggle 도입 이후 값이 항상 한 줄이라 공백 기준 줄바꿈만 쓰인다. */
+.card > div,
+.card .hint {
+  min-width: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+/* ★★★ 어수선함의 큰 원인 - 카드 안에 카드가 들어가면(보유 종목 행,
+   후보 카드 등) 테두리와 그림자가 이중으로 그려져 '상자 속 상자'가
+   겹쳐 보였다. 안쪽 카드는 테두리·그림자를 지우고 옅은 배경으로만
+   구분한다 - 구분은 되면서 선이 줄어 훨씬 정돈돼 보인다. */
+.card .card {
+  border: none;
+  box-shadow: none;
+  background: var(--rule2);
+  border-radius: calc(var(--radius) - 4px);
+  padding: var(--s2) var(--s3);
+}
+
+/* ★ 3단 중첩까지 가면 배경색이 또 겹친다 - 거기서는 배경도 지우고
+   왼쪽 선 하나로만 구분한다. */
+.card .card .card {
+  background: transparent;
+  border-left: 2px solid var(--rule);
+  border-radius: 0;
+  padding-left: var(--s3);
+}
+
+/* ━━ "오늘 어디서 막혔나" 히스토그램 막대 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.histogram-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--rule2);
+  font-size: 13px;
+}
+
+.histogram-row:last-child {
+  border-bottom: none;
+}
+
+.histogram-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--rule2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.histogram-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--faint);
+}
+
+/* ━━ 판정 항목 표시 (▓░ 블록 대신 항목명+통과여부를 명확히 나열) ━━━━━━━━ */
+.verdict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.verdict-title {
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.verdict-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--rule2);
+}
+
+.verdict-item:last-child {
+  border-bottom: none;
+}
+
+.verdict-mark {
+  font-weight: 700;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.verdict-item.pass .verdict-mark { color: var(--rise); }
+.verdict-item.fail .verdict-mark { color: var(--fall); }
+
+.verdict-label {
+  flex-shrink: 0;
+  color: var(--ink);
+}
+
+.verdict-value {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.verdict-item.flip {
+  animation: cond-flip 600ms ease;
+}
+
+@keyframes cond-flip {
+  0% { background: var(--rule2); }
+  30% { background: #fff3cd; }
+  100% { background: transparent; }
+}
+
+/* ━━ 판단 근거 패널 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.evi {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s3) var(--s3);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.evi .evi-title {
+  color: var(--ink);
+  font-weight: 600;
+  margin-bottom: var(--s1);
+}
+
+/* ━━ 테마 선정 화면 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.theme {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  margin-bottom: var(--s2);
+  background: var(--card);
+}
+
+.theme > summary {
+  cursor: pointer;
+  padding: var(--s3) var(--s3);
+  font-weight: 600;
+  list-style: none;
+}
+
+.theme > summary::-webkit-details-marker {
+  display: none;
+}
+
+.theme > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: var(--s2);
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.theme[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.theme .theme-body {
+  padding: 0 var(--s3) var(--s3);
+  border-top: 1px solid var(--rule2);
+}
+
+/* ━━ 표 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* ★★★ "설명란이 너무 길다 - 가로 스크롤 넣고 현재 창에서 볼 수 있게"
+   연계 테스트 표의 '실패 이유'·'받은 값'은 API 원본 메시지라 길어질 수밖에
+   없다. 표를 이 컨테이너로 감싸면 창을 벗어나지 않고 표 안에서만 좌우로
+   움직인다. max-width:100% 가 핵심 - 없으면 자식 표가 부모를 밀어낸다. */
+/* ★★★ "설명 등은 아이콘으로 대체한 후 아이콘을 누르면 설명이 나오게" -
+   긴 안내 문단이 화면을 채워 정작 봐야 할 데이터가 묻히던 문제를 푼다.
+   작아서 눈에 안 거슬리되, 손가락으로 누를 수 있는 크기는 지킨다. */
+/* ★ 아이콘과 팝업을 감싸는 기준점 - 팝업이 이 위치를 기준으로 뜬다. */
+.info-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+/* ★★★ "제목을 마우스 오버했을 때만 설명이 나타나도록" - 제목에 설명을
+   달아 두면 본문에 안내 문단을 따로 둘 필요가 없다. */
+.has-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ★★★ "필요하면 팝업화면으로 분기해" - 긴 설명·표를 본문에 깔면 화면이
+   스크롤로 길어진다. 모달로 띄우면 본문은 짧게 유지된다. */
+.modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal-box {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  /* ★ 화면 높이를 넘지 않게 - 모달 자체가 스크롤을 만들면 의미가 없다. */
+  max-height: 85vh;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.modal-body {
+  overflow: auto;
+  padding: var(--s3);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.info-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: var(--s1);
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.info-dot:hover {
+  /* ★ 실제로 겪은 버그 - 정의된 적 없는 --fg 변수를 쓰고 있어서(:root 에
+     선언 없음) 호버해도 색이 안 바뀌었다. --ink 로 고친다. */
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* ★ 팝업은 절대 위치라 표·카드 위로 떠야 한다 - z-index 를 헤더(10)보다
+   높게 둔다. white-space:pre-line 은 설명에 넣은 줄바꿈을 살리기 위한 것. */
+.info-pop {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  z-index: 50;
+  min-width: 240px;
+  max-width: 360px;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-align: left;
+}
+
+.hscroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ★ 아주 긴 셀은 폭을 제한해 한 줄로 두고, 넘치면 말줄임으로 보여준다.
+   전체 내용은 행을 펼치면(expand) 볼 수 있다. 단, 숫자 칸(.num - 금액·수량 등)은
+   말줄임에서 뺀다 - "숫자 뒤에가 짤려" 보였던 원인. 종목명·사유 같은 글자
+   칸과 달리 숫자는 말줄임으로 일부가 가려지면 값을 완전히 잘못 읽게 되므로,
+   표 전체가 필요하면 .hscroll 이 제공하는 가로 스크롤로 보게 한다. */
+.hscroll table.grid td {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hscroll table.grid td.num,
+.hscroll table.grid tr.summary-row td {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--card);
+}
+
+table.grid th,
+table.grid td {
+  padding: var(--s2) var(--s3);
+  /* ★★★ 기본은 왼쪽 정렬 - 글자가 대부분이다. 예전엔 전부 오른쪽이라
+     종목명·청산사유 같은 컬럼이 오른쪽으로 밀려 시작점이 제각각이었고,
+     그게 표를 어수선해 보이게 한 큰 원인이었다. */
+  text-align: left;
+  border-bottom: 1px solid var(--rule2);
+  white-space: nowrap;
+}
+
+/* ★ 숫자만 오른쪽 정렬 - 자릿수가 맞아야 크기를 눈으로 비교할 수 있다.
+   tabular-nums 는 숫자 폭을 고정해 1 과 8 이 같은 칸을 쓰게 한다
+   (없으면 값이 바뀔 때마다 열이 미세하게 흔들린다). */
+table.grid th.num,
+table.grid td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  /* ★ "숫자 뒤에가 짤리거나 단위가 아랫줄로 나와. 한줄에 표현되게 수정" - 예전엔
+     원화 환산을 "\n" 으로 둘째 줄에 붙이던 기능이 있어 여기서 pre-line 으로 풀어
+     뒀지만, 그 기능은 없어졌다(달러/원 중 하나만 보여주는 토글로 대체). 지금은
+     값이 항상 한 줄짜리라 pre-line 을 두면 칸 폭을 넘길 때 줄바꿈만 일으킨다 -
+     table.grid td 의 기본 nowrap 으로 되돌린다(잘리지 않도록 위 .hscroll 규칙에서
+     .num 칸은 말줄임 대상에서 뺐다). */
+  white-space: nowrap;
+}
+
+table.grid thead th {
+  position: sticky;
+  /* 0 이면 메뉴 뒤에 가려 안 보인다 - .stickytop 높이만큼 내려서 고정한다 */
+  top: var(--stickh);
+  background: var(--card);
+  color: var(--muted);
+  font-weight: 600;
+  z-index: 10;
+  border-bottom: 1px solid var(--rule);
+}
+
+table.grid tr.filter-row td {
+  padding: var(--s1) var(--s3);
+  background: var(--paper);
+}
+
+table.grid tr.filter-row input,
+table.grid tr.filter-row select {
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+table.grid tr.summary-row td {
+  font-weight: 600;
+  background: var(--paper);
+  border-top: 2px solid var(--rule);
+  /* ★ 합계 행("손익" 등)도 위 table.grid td.num 과 같은 이유로 nowrap 로
+     되돌린다(예전 "\n" 원화 줄바꿈 기능은 없어졌다) - "num" 클래스가 안 붙어
+     그 규칙을 안 타므로 여기서 따로 맞춘다. */
+  white-space: nowrap;
+}
+
+table.grid tr.expand-row td {
+  background: var(--paper);
+  text-align: left;
+  white-space: normal;
+}
+
+table.grid tbody tr:hover {
+  background: var(--rule2);
+}
+
+table.grid .bar-cell {
+  position: relative;
+}
+
+table.grid .bar-cell .bar-fill {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  right: 0;
+  background: var(--rule2);
+  z-index: 0;
+}
+
+table.grid .bar-cell .bar-fill.rise { background: rgba(192, 57, 43, 0.18); }
+table.grid .bar-cell .bar-fill.fall { background: rgba(20, 83, 154, 0.18); }
+
+table.grid .bar-cell span {
+  position: relative;
+  z-index: 1;
+  /* ★ bar:true 열("손익")도 위 두 규칙과 같은 이유로 nowrap 로 되돌린다(예전
+     "\n" 원화 줄바꿈 기능은 없어졌다). */
+  white-space: nowrap;
+}
+
+/* ★★★ "모바일에서 원화표기가 잘 안보여. 천원단위로 표현하고 하단에 작은 폰트로
+   표기해" - 해외주식 달러 금액 옆 원화(천원 단위) 환산을 <br> 로 내린 둘째 줄에
+   작게 보여주는 클래스. app.js 의 _usdWithKrw/_usdSignedWithKrw(HTML 버전)가
+   `<span class="usd-krw-sub">...</span>` 로 감싸 내보낸다 - innerHTML/html: 로
+   꽂히는 곳 전용이다(DataGrid 의 col.fmt 대부분, el(..., {html}) 템플릿). */
+.usd-krw-sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.rise { color: var(--rise); }
+.fall { color: var(--fall); }
+
+/* ━━ 버튼 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ★★ 새 변형은 반드시 button.b.xxx 형태로 기존 계열 안에 넣는다.
+   한 단어 클래스(예: .danger { color:var(--fall) })를 새로 만들면
+   기존 button.b.danger(빨강 배경)까지 덮어써 빨강 배경에 파란 글씨가
+   되어 글자가 안 보인다. 실제로 난 버그다. */
+button.b {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--ink-contrast);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(26, 29, 33, 0.12);
+  transition: opacity 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
+}
+
+button.b:hover {
+  opacity: 0.88;
+  box-shadow: 0 2px 6px rgba(26, 29, 33, 0.18);
+}
+
+button.b:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 1px rgba(26, 29, 33, 0.1);
+}
+
+button.b:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+button.b.ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule);
+  box-shadow: none;
+}
+
+button.b.ghost:hover {
+  background: var(--rule2);
+  box-shadow: none;
+}
+
+button.b.warn {
+  background: var(--halt);
+  border-color: var(--halt);
+  color: #fff;
+}
+
+button.b.danger {
+  background: var(--rise);
+  border-color: var(--rise);
+  color: #fff;
+}
+
+button.b.quiet-danger {
+  background: transparent;
+  border-color: var(--rise);
+  color: var(--rise);
+  box-shadow: none;
+}
+
+button.small {
+  padding: var(--s1) var(--s3);
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+/* ━━ 배너 / 토스트 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.banner {
+  padding: var(--s3) var(--s3);
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  font-size: 13px;
+}
+
+.banner.warn {
+  background: #fff7e6;
+  border-color: #f0c36d;
+  color: #7a4e00;
+}
+
+.banner.danger {
+  background: #fdecec;
+  border-color: #e2a3a3;
+  color: var(--rise);
+}
+
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  background: var(--ink);
+  color: var(--ink-contrast);
+  padding: var(--s3) var(--s4);
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: var(--shadow-lg);
+  max-width: 360px;
+}
+
+/* ━━ 콘솔(일지/로그) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.console {
+  background: #14161a;
+  color: #d8dadd;
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: var(--radius);
+  padding: var(--s3) var(--s3);
+  max-height: 360px;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+
+.console .line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console .line.warn { color: #e8c25a; }
+/* ★ 손익 줄: 이익 = 빨강, 손실 = 파랑(어두운 배경에서 읽히도록 밝게). 노랑(warn)은 경고 전용. */
+.console .line.gain { color: #ff8f86; }
+/* ★ 진행 로그 날짜 머리글 - 줄에는 시간만 나오고 날짜는 여기서 한 번만 보여준다. */
+.console .log-date {
+  color: #9aa3b0;
+  font-weight: 600;
+  margin: 8px 0 2px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #2a2e35;
+}
+.console .log-date:first-child { margin-top: 0; }
+.console .line.loss { color: #7db4ff; }
+.console .line.error { color: #e8746a; }
+
+/* ━━ 스켈레톤 로딩 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.skel {
+  background: linear-gradient(90deg, var(--rule2) 25%, var(--rule) 37%, var(--rule2) 63%);
+  background-size: 400% 100%;
+  animation: skel-pulse 1.4s ease infinite;
+  border-radius: 6px;
+}
+
+@keyframes skel-pulse {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* ━━ 차트 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.chartbox {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+  /* 휠로 확대/축소할 때 페이지 스크롤·바운스가 함께 일어나지 않게 한다 */
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  padding: var(--s2) var(--s2);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.chart-error,
+.chart-skeleton {
+  padding: var(--s3);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ━━ 범례 / 세그먼트 컨트롤 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: var(--s1);
+  vertical-align: middle;
+}
+
+.legend .dot.s1 { background: var(--series1); }
+.legend .dot.s2 { background: var(--series2); }
+.legend .dot.s3 { background: var(--series3); }
+.legend .dot.s4 { background: var(--series4); }
+.legend .dot.s5 { background: var(--series5); }
+.legend .dot.s6 { background: var(--series6); }
+.legend .dot.setc { background: var(--series-etc); }
+
+.seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg button {
+  border: none;
+  background: var(--card);
+  color: var(--muted);
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.seg button:hover:not(.active) {
+  background: var(--rule2);
+  color: var(--ink);
+}
+
+.seg button + button {
+  border-left: 1px solid var(--rule);
+}
+
+.seg button.active {
+  background: var(--ink);
+  color: var(--ink-contrast);
+}
+
+/* ━━ 설정 폼 (forms.js) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.field {
+  margin-bottom: var(--s3);
+}
+
+.field > label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: var(--s1);
+}
+
+.field input[type="text"],
+.field input[type="password"],
+.field input[type="number"],
+.field input[type="time"],
+.field select {
+  padding: var(--s2) var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  font-size: 13px;
+  min-width: 140px;
+  background: var(--card);
+  color: var(--ink);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.field input[type="text"]:focus-visible,
+.field input[type="password"]:focus-visible,
+.field input[type="number"]:focus-visible,
+.field input[type="time"]:focus-visible,
+.field select:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(26, 29, 33, 0.08);
+}
+
+.field .suffix {
+  margin-left: var(--s2);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field .hint {
+  margin-top: var(--s1);
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 480px;
+}
+
+.techlist .tech-row,
+.checklist label {
+  padding: var(--s1) 0;
+  font-size: 13px;
+}
+
+/* ━━ 기법 배지 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* ★ button 뿐 아니라 span(성과 요약의 기법별 배지처럼 클릭 동작이 없는
+   경우)에도 같은 알약 모양을 쓸 수 있게 태그 제한을 없앴다. */
+.badge.tech {
+  display: inline-block;
+  padding: 3px var(--s2);
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+button.badge.tech {
+  cursor: pointer;
+}
+
+button.badge.tech:hover {
+  background: var(--rule2);
+  border-color: var(--faint);
+  box-shadow: var(--shadow-sm);
+}
+
+.tech-popup {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* ━━ 관심종목 검색 추가(searchlist) - "코드를 직접 타이핑하지 말고 이름으로
+   검색해서 고르게 해달라" 요청. 검색창 + 드롭다운 결과 + 추가된 종목 알약
+   목록(.badge.tech 재사용, 항상 "이름(코드)" 형태). ━━━━━━━━━━━━━━━━━━━━━━ */
+.searchlist-searchwrap {
+  position: relative;
+  max-width: 320px;
+}
+
+.searchlist-results {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+}
+
+.searchlist-result {
+  padding: var(--s2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.searchlist-result:hover {
+  background: var(--rule2);
+}
+
+.searchlist-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin-top: var(--s2);
+}
+
+.searchlist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.searchlist-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+
+.searchlist-remove:hover {
+  color: var(--fall);
+}
+
+/* ━━ 연결 표시등 - 아이콘 하나로(글자 라벨 없음). title(데스크톱 호버)·클릭(모바일, app.js
+   toast)로 같은 설명을 본다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#conn-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 15px;
+  line-height: 1;
+}
+
+#conn-indicator[data-mode="reconnecting"] { animation: band-blink 1s ease-in-out infinite; }
+
+/* ━━ 상단 밴드 좌측 - 시장별 상태를 아이콘 하나로(글자 라벨 없음). 이모지(시장) + 우하단 점
+   (모드 색). title(데스크톱 호버)·클릭(모바일, app.js toast)로 자세한 문구를 본다. ━━━━━━━━━ */
+.band-icon {
+  position: relative;
+  display: inline-flex;
+  font-size: 17px;
+  line-height: 1;
+  margin-right: 8px;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.band-icon[data-state]:not([data-state="off"]) {
+  filter: none;
+  opacity: 1;
+}
+
+.band-icon::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  background: var(--idle);
+}
+
+.band-icon[data-state="sim"]::after { background: var(--sim); }
+.band-icon[data-state="web"]::after { background: var(--web); }
+.band-icon[data-state="paper"]::after { background: var(--paper-mode); }
+.band-icon[data-state="live"]::after { background: var(--live); }
+.band-icon[data-state="halt"]::after { background: var(--halt); animation: band-blink 1s ease-in-out infinite; }
+.band-icon[data-state="degraded"]::after { background: var(--degraded); animation: band-blink 1s ease-in-out infinite; }
+.band-icon[data-state="off"]::after { background: var(--idle); }
+
+/* ━━ 패널 뼈대 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+main {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: var(--s3);
+  /* ★★ 뉴스 제목처럼 긴 텍스트가 줄바꿈 없이 카드 밖으로 넘치면, 그 카드를
+     담은 flex 부모(.panel)가 콘텐츠에 밀려 폭이 늘어나면서 탭마다 화면
+     크기가 다르게 보이는 문제가 있었다(실제로 겪음) - 모든 텍스트를
+     기본적으로 줄바꿈하게 한다. */
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.panel {
+  display: none;
+  /* ★ 패널 안에서 순서대로 쌓이는 블록(배너·카드·h2 섹션 등) 사이 간격을
+     여기서 한 번에 관리한다 - showTab() 이 display 를 "flex" 로 바꾼다. */
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* ━━ 설정 화면 - 가로 탭 + 고정 프레임 + 하단 고정 버튼 ━━━━━━━━━━━━━━━━━ */
+.config-frame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  /* ★ 상단바(밴드+그룹탭+하위탭)를 뺀 나머지를 이 화면 하나가 다 쓴다 -
+     탭은 위에 고정되고, 안의 내용만 스크롤되며, 저장 버튼은 늘 바닥에
+     붙어 있어야 한다는 요청에 따른 구조다. */
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.config-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* ★ 스크롤 영역과 하단 고정 버튼 사이에 카드가 바짝 붙지 않게. */
+  padding-bottom: var(--s2);
+}
+
+/* ★★★ "설정에 모든 항목을 접었는데, 항목별 스크롤 해야하니 네비게이션이
+   불편해" - 섹션이 여러 개인 그룹 위에 섹션 제목 칩을 늘어놓고 누르면 바로
+   그 카드로 이동한다(.badge.tech 알약 모양을 재사용하되 더 작고 옅게 - 실제
+   폼 내용과 경쟁하지 않게). .config-scroll 위에 sticky 로 붙여 스크롤 중에도
+   계속 보이게 한다. */
+.config-quicknav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--paper);
+  padding: var(--s1) 0 var(--s2);
+  margin-bottom: 2px;
+}
+
+.config-quicknav-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.config-quicknav-chip:hover {
+  background: var(--rule2);
+  color: var(--ink);
+}
+
+.config-quicknav-chip.active {
+  background: var(--ink);
+  color: var(--ink-contrast);
+  border-color: var(--ink);
+}
+
+.config-actions {
+  display: flex;
+  gap: var(--s2);
+  flex: 0 0 auto;
+  /* ★★ "화면 하단에 고정" - position:sticky 로 뷰포트 하단에 붙인다.
+     .config-scroll 이 자체 스크롤을 갖고 있어 버튼은 항상 보인다. */
+  position: sticky;
+  bottom: 0;
+  background: var(--paper);
+  padding: var(--s3) 0 calc(var(--s1) + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--rule);
+  z-index: 5;
+}
+@media (max-width: 768px) {
+  .group-tab {
+    min-width: 52px;
+    padding: var(--s2) var(--s1) var(--s2);
+  }
+
+  .group-tab-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .group-tab-label {
+    font-size: 10px;
+  }
+
+  .sub-nav a {
+    /* ★ 44px 최소 터치 영역 권장 기준에 맞춰 세로 여백을 살짝 늘린다 -
+       한 줄에 담는 레이아웃(gap·overflow-x)은 그대로 둔다. */
+    padding: 10px var(--s3);
+    font-size: 12px;
+  }
+
+  .cols {
+    grid-template-columns: 1fr;
+  }
+
+  .strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ━━ 모션 최소화 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ━━ 로그인 화면 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+  /* ★ 배경에 아주 옅은 방향성 그라데이션만 더해 완전히 평평해 보이지 않게 한다 -
+     채도·명도 변화가 작아 --paper 의 대비 비율에는 영향이 없다. */
+  background:
+    radial-gradient(600px 400px at 15% 10%, rgba(26, 29, 33, 0.035), transparent 60%),
+    var(--paper);
+}
+
+.login-box {
+  width: 100%;
+  max-width: 320px;
+  align-items: stretch;
+  text-align: center;
+  padding: var(--s5) var(--s4);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--rule2);
+}
+
+.login-title {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.login-box input {
+  font-size: 22px;
+  letter-spacing: 0.4em;
+  text-align: center;
+  padding: var(--s3) var(--s3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.login-box input:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(26, 29, 33, 0.1);
+}
+
+
+/* ━━ 시장 공통 대시보드 부품(상태 카드·보유/감시 표) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.mini-table-wrap { overflow-x: auto; }
+table.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mini-table th {
+  text-align: left; font-weight: 600; font-size: 12px; color: var(--muted);
+  padding: 4px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap;
+}
+.mini-table td { padding: 6px 8px; border-bottom: 1px solid var(--rule2); }
+.mini-table tr:last-child td { border-bottom: none; }
+/* ★ "숫자 뒤에가 짤리거나 단위가 아랫줄로 나와" - 예전 "\n" 원화 줄바꿈 기능은
+   없어졌으니(달러/원 토글로 대체) nowrap 으로 되돌린다. 표 폭이 부족하면
+   .mini-table-wrap 의 가로 스크롤로 본다(칸 안에서 자르거나 줄바꿈하지 않는다). */
+.mini-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mini-table th.num { text-align: right; }
+.mini-table .mk { width: 1.6em; padding-right: 0; }
+.mini-table tr.clickable { cursor: pointer; }
+.mini-table tr.clickable:hover td { background: var(--rule2); }
+
+.card.ctl .ctl-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.card.ctl .ctl-actions { margin-left: auto; display: flex; gap: var(--s2); flex-wrap: wrap; }
+.ctl-badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--rule2); color: var(--muted); white-space: nowrap;
+}
+.ctl-badge.on { background: rgba(46, 160, 90, 0.14); color: #1f7a44; }
+.card.ctl .ctl-sum { margin-top: var(--s1); }
+
+/* 성과 요약은 5칸(누적 손익·거래·승률·손익비·MDD) */
+.strip.strip-perf { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 700px) { .strip.strip-perf { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); } }
+
+/* 시장 필터 + 보조 전환(연습/실거래)을 한 줄에 */
+.filter-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+
+/* ━━ 모바일 최적화 - 한 줄에 담을 수 있는 건 한 줄로 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   지표는 묶음(매매/성과/보유)마다 한 줄, 탭·필터는 줄바꿈 대신 가로 스크롤, 상태 카드 머리글과
+   표 셀은 줄바꿈 없이 말줄임으로 - 세로로 길게 늘어지는 것을 막는다. */
+@media (max-width: 768px) {
+  /* 지표 묶음: 셀 수만큼 칸을 나눠 한 줄에 */
+  .strip.strip-wide.strip-in-group {
+    grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  }
+  .strip-groups { gap: var(--s2); }
+  .strip .cell { padding: var(--s2) 6px; }
+  .strip .cell .label { font-size: 11px; }
+  .strip .cell .label.sub { font-size: 10px; min-height: 0; }
+  .strip .cell .value {
+    /* ★★★ "계속 숫자 뒤에가 짤리거나 단위가 아랫줄로 나와. 한줄에 표현되게
+       수정" - 원화 전체 자릿수("1,728,000원")는 짧은 모바일 칸(3~4열 그리드)엔
+       고정 14px 로 못 들어가는 경우가 많았다. nowrap 이라 넘치면 칸의
+       overflow:hidden 에 잘렸다. clamp() 로 화면 폭이 좁을수록 글자를 더 줄여
+       (최소 10px) 대부분의 자릿수에서 한 줄에 들어오게 한다. */
+    font-size: clamp(10px, 3.4vw, 14px);
+    margin-top: 1px;
+    white-space: nowrap;
+  }
+  .strip.strip-wide .cell .spark { display: none; }
+
+  /* 성과 요약 5칸도 한 줄 */
+  .strip.strip-perf { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+  /* 탭·필터 버튼: 한 줄에 다 들어가면 한 줄, 넘치면 줄바꿈 - 가로 스크롤로 숨기면 뒤쪽 탭(환율·암호화폐)이 안 보였다 */
+  .seg { display: flex; flex-wrap: wrap; max-width: 100%; }
+  .seg button { flex: 1 1 auto; padding: var(--s2) 8px; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .filter-row { flex-wrap: wrap; gap: var(--s2); }
+
+  /* 자동매매 카드 머리글: 이름·상태·버튼은 되도록 한 줄에, 하지만 "전량 청산 후 정지"처럼
+     긴 버튼까지 다 붙으면 375px 폭에서 넘쳐 뒤가 잘렸다(실제로 겪음) - 강제로 한 줄에
+     구겨넣지 않고 넘치면 다음 줄로 자연스럽게 내려가게 한다. */
+  .card.ctl .ctl-head { flex-wrap: wrap; gap: 6px; }
+  .card.ctl .ctl-head > b { white-space: nowrap; font-size: 14px; }
+  .card.ctl .ctl-actions { flex-wrap: wrap; gap: 4px; }
+  .card.ctl .ctl-actions .b { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+  .ctl-badge { font-size: 11px; padding: 2px 6px; }
+
+  /* 표: 셀 안 줄바꿈 금지(가로로 넘치면 표만 스크롤) */
+  table.mini-table { font-size: 12px; }
+  .mini-table th, .mini-table td { padding: 5px 6px; white-space: nowrap; }
+  table.grid td, table.grid th { white-space: nowrap; }
+
+  /* 진행 로그: 한 건이 한 줄 - 길면 잘리지 않고 좌우로 끌어서(스와이프) 본다 */
+  .console { overflow-x: auto; }
+  .console .line { white-space: nowrap; width: max-content; min-width: 100%; }
+}
+
+
+/* 종목 시세 카드: 선택 상자와 상세보기 팝업 */
+.sym-select { max-width: 200px; font-size: 12px; padding: 3px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); color: var(--ink); }
+.modal-box.wide { width: min(1100px, 96vw); }
+@media (max-width: 768px) {
+  .sym-select { max-width: 130px; }
+  .modal-back { padding: var(--s2); }
+}
+
+/* 모바일: 보유 종목 표에서 기법 열은 뺀다(폭이 좁다) */
+@media (max-width: 768px) { .mini-table .col-tech { display: none; } }
+
+/* 좌우로 넘치는 영역은 마우스로 끌어서 볼 수 있다(터치는 기본 스와이프) */
+.drag-x { cursor: grab; }
+.drag-x.dragging { cursor: grabbing; user-select: none; }
+
+/* 종목 시세 차트 확대·축소 버튼 */
+.chartbox .chart-zoombar { position: absolute; top: 2px; right: 62px; display: flex; gap: 2px; z-index: 5; }
+.chartbox .chart-zoombar button {
+  border: 1px solid var(--rule); background: var(--card); color: var(--muted);
+  font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; cursor: pointer; opacity: 0.85;
+}
+.chartbox .chart-zoombar button:hover { opacity: 1; color: var(--ink); }
+
+/* 자격증명 입력: 항목 이름 + 등록 상태 라벨 */
+.cred-row { display: flex; flex-direction: column; gap: 4px; margin-top: var(--s2); }
+.cred-label { font-size: 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+
+/* 종목 선정 목록: 탈락 행은 흐리게, 근거 열은 줄바꿈 허용 */
+.mini-table tr.dim td { color: var(--muted); }
+.mini-table tr.dim td:first-child + td { color: var(--muted); }
+.sel-list td.why { white-space: normal; min-width: 220px; }
+/* ★ 예전엔 모바일에서만 이 열을 nowrap 으로 되돌려, 선정 사유 문장이 한 줄로 늘어져
+   표를 옆으로 끌어야만 끝까지 읽혔다(실제로 겪은 문제) - 데스크톱과 똑같이 줄바꿈되게
+   둔다. min-width 는 지나치게 좁아지지만 않게 하는 하한선일 뿐 강제 폭이 아니다. */
+
+/* 설정 입력 분류: 필수 / 선택 / 자동 */
+.tier-badge { display: inline-block; font-size: 10px; font-weight: 700; line-height: 1; padding: 2px 5px; margin-right: 5px; border-radius: 4px; vertical-align: middle; }
+.tier-badge.required { background: var(--rise); color: #fff; }
+.tier-badge.optional { background: var(--rule2); color: var(--muted); }
+.tier-badge.auto { background: rgba(46, 160, 90, 0.16); color: #1f7a44; }
+details.auto-fields { margin-top: var(--s2); border-top: 1px dashed var(--rule); padding-top: var(--s2); }
+details.auto-fields > summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-bottom: var(--s2); }

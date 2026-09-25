@@ -1,0 +1,289 @@
+# mode 는 5가지 중 하나:
+#   web    - 화면으로 지켜보며 신호만 확인 (주문 없음)
+#   replay - 과거 데이터를 그대로 재생하며 검증
+#   paper  - 실시간 시세로 모의 주문 (실제 체결 없음)
+#   live   - 실제 계좌로 실주문 (원칙 11: 이 엔진은 항상 하나뿐)
+#   sim    - 가상 시나리오로 극단 상황 테스트
+mode: sim
+
+# 투자금액 배분·분할 매수/매도(세 시장 공통). 시장별 총 투자금액은 capital.allocation(국내, 원)·overseas.budget_usd(해외, 달러)·crypto.budget(암호화폐, 원).
+sizing:
+  signal_sizing: true
+  min_mult: 0.6
+  max_mult: 2.2
+  scale_in: true
+  initial_ratio: 0.3
+  max_adds: 3
+  add_step_pct: 0
+  scale_out: true
+  first_exit_at: 0
+  first_exit_ratio: 0.20
+  second_exit_ratio: 0.35
+  breakeven_after_first: true
+  dynamic: true
+  take_profit_adx_threshold: 25
+  take_profit_adx_full: 50
+  take_profit_max_widen: 2
+capital:
+  allocation: 10000000
+  max_positions: 2
+risk:
+  stop_loss_pct: 0.035
+  take_profit_pct: 0.08
+  trailing_stop_pct: 0.05
+  trailing_arm_pct: 0.03
+  daily_loss_limit_pct: 0.03
+  weekly_loss_limit_pct: 0.06
+  daily_max_trades: 50
+  max_consecutive_losses: 2
+  reduce_after_loss: true
+  reduced_size_pct: 0.5
+  max_slippage_pct: 0.005
+  cooldown_minutes: 20
+  min_order_amount: 10000
+  loss_halt_cooldown_hours: 3
+  dynamic_take_profit: true
+  technique_learning_mode: entry_pref
+  style: normal
+screen:
+  ranking_count: 100
+  min_trading_amount: 5000000000
+  min_price: 1000
+  max_price: 200000
+  min_change_rate: 0.03
+  max_change_rate: 0.12
+  exclude_warnings:
+  - LIQUIDATION_TRADING
+  - INVESTMENT_WARNING
+  - INVESTMENT_RISK
+  - OVERHEATED
+  exclude_preferred: true
+  exclude_etf_etn: true
+  top_themes: 2
+  candidates_per_theme: 2
+  min_theme_members_up: 2
+  allow_unmapped: false
+  auto_daily: true
+  auto_time: "09:20"
+  meta_cache_minutes: 30
+  watchlist: []
+entry:
+  scan_start: "09:20"
+  scan_end: "14:00"
+  breakout_lookback: 15
+  volume_surge_ratio: 2
+  volume_window: 20
+  poll_seconds: 30
+  rescreen_minutes: 30
+  max_vi_gap_pct: 0.03
+  use_closed_bars_only: true
+  extra_windows: true
+  open_window_start: "09:00"
+  close_window_end: "15:00"
+  selection_day_start: "08:00"
+  selection_day_end: "21:00"
+exit:
+  force_close_time: "15:10"
+  force_close_deadline_min: 9
+  use_conditional_oco: true
+  max_hold_minutes: 4320
+  allow_overnight: true
+strategy:
+  entry_order:
+  - breakout
+  - theme_leader
+  - bull_flag
+  - volume_dry_pop
+  - ma_pullback
+  exit_enabled:
+  - fixed
+  - trailing
+  - atr_stop
+  - time_stop
+  - momentum_fade
+  best_signal: true
+  performance_weight: 0.3
+  min_trades_for_weight: 20
+  params:
+    atr_stop:
+      atr_multiple: 4.5
+    momentum_fade:
+      bear_streak: 5
+      volume_fade_ratio: 0.3
+      min_hold_minutes: 10
+      vol_avg_bars: 3
+live:
+  require_preflight: true
+  reconcile_every_loops: 10
+  degrade_after_failures: 3
+  degrade_halt_minutes: 5
+  adopt_unknown_holdings: false
+  cancel_orphans_on_start: true
+ui:
+  stream: true
+  tick_ms: 1000
+  chart_window: 30m
+  animate: true
+  grid_density: comfortable
+  session_idle_minutes: 30
+simulation:
+  scenario: strong_theme
+  speed: 3600
+  seed: 5
+  start_time: "09:00"
+  history_days: 5
+  days: 6
+news:
+  mode: view
+  risk_hours: 12
+  enabled: true
+  sources: []
+  theme_queries: true
+  lookback_hours: 24
+  refresh_minutes: 10
+  auto_refresh_seconds: 60
+  reaction_window_min: 30
+  theme_boost: 0
+  ai_filter: true
+  ai_max_calls_per_day: 300
+  groq_model: openai/gpt-oss-20b
+notify:
+  enabled: true
+  notify_in_practice: false
+  telegram_token: ''
+  telegram_chat_id: ''
+  events:
+  - trade
+  - daily
+  - monthly
+  - yearly
+  daily_review: true
+  crypto_review_time: "21:00"
+  overseas_review_time: "06:00"
+overseas:
+  enabled: false
+  mode: web
+  watchlist:
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - META
+  - TSLA
+  - AMD
+  - AVGO
+  - TSM
+  - MU
+  - ASML
+  - ARM
+  - SMCI
+  - INTC
+  - BRK.B
+  - SPY
+  - SMH
+  - SOXX
+  budget_usd: 10000
+  max_positions: 4
+  poll_seconds: 300
+  min_price: 5
+  max_daily_change_pct: 0.35
+  auto_select: false
+  auto_select_count: 10
+  allocation_pct: 0.3
+  trade_premarket: false
+  trade_regular: true
+  trade_afterhours: false
+  trade_overnight: false
+  manage_seconds: 60
+  theme_select: true
+  top_themes: 3
+  candidates_per_theme: 3
+  min_theme_members_up: 2
+  theme_min_change_rate: 0.01
+  theme_max_change_rate: 0.12
+  theme_min_trading_amount: 20000000
+  theme_refresh_minutes: 60
+  stop_loss_pct: 0.035
+  take_profit_pct: 0.08
+  trailing_pct: 0.05
+  trailing_arm_pct: 0.03
+  max_hold_minutes: 4320
+  dynamic_take_profit: true
+  technique_learning_mode: entry_pref
+  style: normal
+  daily_max_trades: 50
+crypto:
+  enabled: false
+  mode: paper
+  live: false
+  entry_order:
+  - volatility_breakout
+  exit_enabled:
+  - fixed
+  - trailing
+  - atr_stop
+  - time_stop
+  - momentum_fade
+  watchlist:
+  - KRW-BTC
+  - KRW-ETH
+  - KRW-XRP
+  budget: 10000000
+  poll_seconds: 30
+  k: 0.5
+  min_trading_value_krw: 5000000
+  min_trading_value_bars: 10
+  stop_loss_pct: 0.035
+  take_profit_pct: 0.08
+  trailing_pct: 0.05
+  max_hold_hours: 336
+  dynamic_take_profit: true
+  technique_learning_mode: entry_pref
+  style: normal
+  daily_loss_limit_pct: 0.05
+  consecutive_loss_halt: 3
+  loss_halt_cooldown_hours: 3
+  commission_pct: 0.0004
+  auto_top_volume: true
+  top_volume_count: 10
+  max_positions: 5
+  reentry_cooldown_minutes: 30
+  allocation_per_coin: 0
+  daily_max_trades: 50
+swing:
+  enabled: true
+  mode: paper
+  live: false
+  entry_order:
+  - swing_ma_pullback
+  - swing_breakout
+  - swing_golden_cross
+  exit_enabled:
+  - fixed
+  - trailing
+  - time_stop
+  - momentum_fade
+  watchlist: []
+  overseas_watchlist: []
+  crypto_watchlist: []
+  budget: 10000000
+  max_positions: 5
+  poll_seconds: 1800
+  stop_loss_pct: 0.1
+  take_profit_pct: 0.4
+  trailing_pct: 0.1
+  max_hold_days: 60
+  dynamic_take_profit: true
+  technique_learning_mode: entry_pref
+  trend_filter_ma: 60
+  week_momentum_min_pct: 0
+  consecutive_loss_halt: 3
+  loss_halt_cooldown_hours: 3
+costs:
+  commission_pct: 0.00015
+  tax_pct: 0.0015
+themes_file: themes.yaml
+state_dir: state
+log_dir: logs
+account_seq:
