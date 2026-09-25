@@ -79,6 +79,20 @@ CSV 컬럼: `symbol, ts, open, high, low, close, volume`. `ts` 는 KST 타임존
   `_session_stats_for()` 와 같은 계산식) - 받아 온 봉 창만으로 근사하지 않는다.
 - 전일 고가·저가(`volatility_breakout` 기법용)도 실제 전일 값을 쓴다.
 
+종목 선정(스크리너 게이팅, `[7-2]`):
+
+- **`screener_gate=True`(기본)** - 로드한 유니버스 전체를 매 틱 평가하지 않는다. 실전의
+  `daytrader/screener.py`(`Screener.build_report()`)와 같은 규칙(등락률 3~12% 동반상승 2종목
+  이상인 테마만, 상위 `top_themes`개 테마에서 테마당 `candidates_per_theme`종목까지, 가격대·
+  거래대금(`min_trading_amount`) 하한)을 `research/backtest.py`의 `_score_themes_approx`/
+  `_pick_candidates_approx`가 캐시된 분봉만으로 근사해, `cfg.entry.rescreen_minutes`마다 후보를
+  다시 뽑는다(등락률은 그날 시가 대비, 거래대금은 그날 09:00부터 누적한 (전형가×거래량)의 합으로
+  근사 - 실시간 랭킹 API가 없어 뉴스·유의종목·ETF/우선주 필터는 뺀다). **이 게이팅이 없으면
+  "실전과 다른(훨씬 큰) 유니버스를 매매하는 전략"을 채점하는 셈이라 거래 수가 부풀고 품질 낮은
+  진입이 섞여 승률·기대값이 실전보다 체계적으로 나쁘게 나온다** - 실측으로 확인한 하네스 편향이다.
+- `screener_gate=False`로 끄면 예전처럼 유니버스 전체를 그대로 평가한다(게이팅 자체의 영향을
+  따로 보고 싶을 때만 쓴다).
+
 체결·비용:
 
 - 진입: 신호가 확정된 **닫힌 봉의 다음 봉 시가**에, 슬리피지(기본
@@ -95,6 +109,18 @@ CSV 컬럼: `symbol, ts, open, high, low, close, volume`. `ts` 는 KST 타임존
 
 - 분할 매수(피라미딩)·분할 매도의 실제 수량 나눔(단, `scale_out=True` 로 실험하면 고정
   익절이 꺼지는 실제 부작용은 재현된다 - `playbook.FixedExit` 코드 그대로).
+  **★★★ 중요 - `config.yaml` 의 기본값이 `sizing.scale_out: true` 이므로, 아무 옵션도
+  안 주는 "기준선(baseline)" 결과는 이미 이 상태로 돈다.** 실전은 `scale_out=true` 일 때
+  이익이 나는 종목을 1차(목표폭의 절반)·2차(목표폭)에서 나눠 팔아 수익을 중간중간
+  챙기지만(`sizing.exit_step`), 이 하네스는 "나눠 판다" 자체를 흉내내지 않고 고정
+  전량 익절(`FixedExit`)만 끄기 때문에, 기준선의 모든 거래는 사실상 "익절 없이 손절·
+  ATR손절·추적손절·시간손절·모멘텀소멸·강제청산으로만 끝난다" - 실측으로도 기준선
+  거래 중 `fixed` 청산(손절이든 익절이든)은 0건이었다. **즉 기준선의 승률·기대값은
+  실전보다 체계적으로 더 나쁘게 나온다(이익을 중간에 챙기는 실전 대비 훨씬 가혹한
+  대용치다)** - 승률 숫자 자체를 "이 전략은 나쁘다"는 근거로 곧이곧대로 읽으면 안 된다.
+  2절의 `c_trailing_and_scaleout` 가설이 `scale_out=False`(고정 익절 8% 그대로) 대안을
+  같이 보여주니 참고하라 - 이것도 실전(부분매도)의 정확한 대용은 아니지만, 최소한
+  "끝까지 들고 가면 어떻게 끝났을지"는 보여준다.
 - VI(상한가 근접)·호가 잔량·체결 우선순위·뉴스 반응.
 - 주간(weekly) 손실 한도. 연속 손절 정지(`max_consecutive_losses`)는 구현했지만
   `reduce_after_loss=True`(기본값)면 실전처럼 "정지"가 아니라 "축소 매수"가 맞는 동작인데,
