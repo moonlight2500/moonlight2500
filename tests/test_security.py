@@ -234,29 +234,132 @@ def test_password_and_lockout() -> None:
     check("상수 시간 비교가 같은 값은 True", S._same("482913", "482913"))
     check("상수 시간 비교가 다른 값은 False", not S._same("482913", "482914") and not S._same("", "482913"))
 
+    import tempfile
+    tmp_login_path = os.path.join(tempfile.mkdtemp(), "login_attempts.json")
+    orig_login_path_fn = S._login_state_path
+    S._login_state_path = lambda: tmp_login_path
     S._login_attempts.clear()
-    key = "203.0.113.9"
-    for _ in range(2):
-        S._login_record_fail(key)
-    S._login_check_lock(key)  # 2번 실패까지는 안 잠김
-    check("2번 틀려도 아직 안 잠김", True)
-    S._login_record_fail(key)
-    locked = False
+    S._global_login_fails.clear()
+    S._global_login_locked_until = 0.0
+    S._login_state_loaded = False
     try:
+        key = "203.0.113.9"
+        for _ in range(2):
+            S._login_record_fail(key)
+        S._login_check_lock(key)  # 2번 실패까지는 안 잠김
+        check("2번 틀려도 아직 안 잠김", True)
+        S._login_record_fail(key)
+        locked = False
+        try:
+            S._login_check_lock(key)
+        except Exception as exc:
+            locked = getattr(exc, "status_code", None) == 429
+        check("3번째 실패부터 429 로 잠김", locked)
+        S._login_record_success(key)
         S._login_check_lock(key)
-    except Exception as exc:
-        locked = getattr(exc, "status_code", None) == 429
-    check("3번째 실패부터 429 로 잠김", locked)
-    S._login_record_success(key)
-    S._login_check_lock(key)
-    check("성공하면 초기화", True)
+        check("성공하면 초기화", True)
+    finally:
+        S._login_state_path = orig_login_path_fn
+        S._login_attempts.clear()
+        S._global_login_fails.clear()
+        S._global_login_locked_until = 0.0
+        S._login_state_loaded = False
 
     proxied = make_request({"x-forwarded-for": "100.64.0.7, 10.0.0.1"})
-    check("loopback 프록시 뒤에서는 X-Forwarded-For 원래 주소로 센다", S._login_client_key(proxied) == "100.64.0.7")
+    check("★ DAYTRADER_TRUSTED_PROXY 를 켜지 않으면 loopback 이어도 X-Forwarded-For 를 무시한다"
+          "(안 그러면 헤더만 바꿔가며 IP 별 잠금을 우회할 수 있다)",
+          S._login_client_key(proxied) == "127.0.0.1")
+    os.environ["DAYTRADER_TRUSTED_PROXY"] = "1"
+    try:
+        check("신뢰할 수 있는 프록시라고 명시하면 loopback 프록시 뒤에서 X-Forwarded-For 원래 주소로 센다",
+              S._login_client_key(proxied) == "100.64.0.7")
+    finally:
+        os.environ.pop("DAYTRADER_TRUSTED_PROXY", None)
     spoof = make_request({"x-forwarded-for": "1.2.3.4"}, client=("198.51.100.4", 5))
     check("★ loopback 이 아닌 곳이 보낸 X-Forwarded-For 는 믿지 않는다(주소 위조로 잠금 회피 방지)",
           S._login_client_key(spoof) == "198.51.100.4")
     S._login_attempts.clear()
+
+
+def test_global_login_lockout_and_persistence() -> None:
+    print("\n== ★ 로그인 실패 기록 영속화 + 전체(여러 주소 합산) 잠금 ==")
+    import tempfile
+    tmp_path = os.path.join(tempfile.mkdtemp(), "login_attempts.json")
+    orig_path_fn = S._login_state_path
+    S._login_state_path = lambda: tmp_path
+    S._login_attempts.clear()
+    S._global_login_fails.clear()
+    S._login_state_loaded = False
+    S._global_login_locked_until = 0.0
+    try:
+        check("실패가 적을 때는 전체 잠금 없음", S._global_login_check_lock() is None)
+        for i in range(S._GLOBAL_LOGIN_FAIL_LIMIT):
+            S._login_record_fail(f"203.0.113.{i}")  # 서로 다른 주소 - 개별 잠금은 안 걸림
+
+        def is_globally_locked() -> bool:
+            try:
+                S._global_login_check_lock()
+                return False
+            except Exception as exc:
+                return getattr(exc, "status_code", None) == 429
+
+        check("★ 서로 다른 주소에서 나눠 실패해도, 전체 실패 수가 한도를 넘으면 잠김(단일 IP 잠금 우회 방지)",
+              is_globally_locked())
+        check("실패 기록이 파일로 저장됨", os.path.exists(tmp_path))
+
+        # 서버 재시작을 흉내낸다: 메모리 상태를 지우고 파일에서 다시 불러온다.
+        S._login_attempts.clear()
+        S._global_login_fails.clear()
+        S._global_login_locked_until = 0.0
+        S._login_state_loaded = False
+        check("★ 재시작(메모리 초기화) 직후에도 파일에서 실패 기록을 복원해 전체 잠금이 유지됨",
+              is_globally_locked())
+    finally:
+        S._login_state_path = orig_path_fn
+        S._login_attempts.clear()
+        S._global_login_fails.clear()
+        S._global_login_locked_until = 0.0
+        S._login_state_loaded = False
+
+
+def test_confirm_shares_login_lockout() -> None:
+    print("\n== /api/confirm 도 /api/login 과 같은 실패 카운터·잠금을 공유 ==")
+    import tempfile
+    tmp_path = os.path.join(tempfile.mkdtemp(), "login_attempts.json")
+    orig_path_fn = S._login_state_path
+    S._login_state_path = lambda: tmp_path
+    S._login_attempts.clear()
+    S._global_login_fails.clear()
+    S._login_state_loaded = False
+    S._global_login_locked_until = 0.0
+    try:
+        key = "203.0.113.50"
+        req = make_request(client=(key, 1))
+        try:
+            S._check_password_or_raise(req, "000000")
+        except Exception:
+            pass
+        check("틀린 비밀번호 시도(로그인·확인 공용 함수)가 실패 횟수에 반영됨",
+              S._login_attempts.get(key, {}).get("fails") == 1)
+        for _ in range(2):
+            try:
+                S._check_password_or_raise(req, "000000")
+            except Exception:
+                pass
+        check("★ 같은 카운터이므로 /api/confirm 쪽에서 틀려도 /api/login 잠금에 그대로 합산됨",
+              S._login_attempts.get(key, {}).get("fails", 0) >= 3)
+        locked = False
+        try:
+            S._login_check_lock(key)
+        except Exception as exc:
+            locked = getattr(exc, "status_code", None) == 429
+        check("잠긴 뒤에는 login/confirm 어느 쪽으로도 더 시도할 수 없음", locked)
+    finally:
+        S._login_state_path = orig_path_fn
+        S._login_attempts.clear()
+        S._global_login_fails.clear()
+        S._global_login_locked_until = 0.0
+        S._login_state_loaded = False
 
 
 def test_redaction() -> None:
@@ -387,7 +490,8 @@ def main() -> None:
     for t in (test_session_token, test_host_and_origin, test_confirm_tokens, test_local_control,
               test_same_machine, test_admin_local, test_stale_cookie_needs_trusted_device,
               test_password_and_lockout, test_redaction, test_app_surface, test_symbol_validation_and_new_routes,
-              test_idle_timeout, test_first_run_default_password):
+              test_idle_timeout, test_first_run_default_password, test_global_login_lockout_and_persistence,
+              test_confirm_shares_login_lockout):
         t()
     print(f"\n총 {_total}건 중 실패 {len(_failures)}건")
     if _failures:

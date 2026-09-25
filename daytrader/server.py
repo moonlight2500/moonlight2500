@@ -601,16 +601,75 @@ async def auth_check(request: Request):
 
 
 # ★ 무차별 대입(brute-force) 방어. 접속 IP별로 틀린 횟수를 세다가 3번째 실패부터 잠그기 시작해,
-# 틀릴 때마다 잠금 시간을 1분씩 늘린다(3번째=1분, 4번째=2분...). 서버 재시작 시 초기화되는 메모리
-# 카운터로 충분하다 - 이 앱은 사용자가 한 명뿐이라 영구 저장까지는 필요 없다.
+# 틀릴 때마다 잠금 시간을 1분씩 늘린다(3번째=1분, 4번째=2분...).
+# ★★★ 실제로 겪은 구멍 두 가지를 여기서 같이 막는다.
+#   ① 이 카운터가 메모리에만 있으면 서버를 재시작(또는 재시작을 유도)하는 것만으로 잠금이
+#      풀린다 - 그래서 상태 폴더(state_dir)의 파일에 실패 횟수를 같이 저장해 재시작에도 남는다.
+#   ② _login_client_key 가 loopback 에서 온 X-Forwarded-For 를 무조건 믿었다 - Tailscale serve
+#      처럼 이 PC 안의 신뢰할 수 있는 프록시를 거치는 배포에서는 맞는 가정이지만, 그런 프록시가
+#      없는 보통 배포에서는 loopback 에서 원격으로 요청을 보낼 수 있는 사람이 매 시도마다 헤더 값만
+#      바꿔 개별 IP 별 잠금을 통째로 우회할 수 있었다(전체 실패 횟수는 그대로다). 그래서 이제
+#      X-Forwarded-For 는 DAYTRADER_TRUSTED_PROXY=1 환경변수로 이 PC 앞에 신뢰할 수 있는 프록시가
+#      있다고 명시적으로 밝힌 배포에서만 믿는다 - 기본값(없음)은 항상 실제 접속 주소 하나로 센다.
+#   ③ ①·②와 별개로, 키를 계속 바꿔가며(다른 IP 여러 개, 또는 위 우회) 시도해도 뚫리지 않도록
+#      "누가 보냈든" 최근 10분간 실패가 너무 많으면(기본 20회) 전체를 잠깐 잠근다.
 _login_attempts: dict[str, dict] = {}
+_global_login_fails: list[float] = []
+_global_login_locked_until: float = 0.0
+_login_state_lock = threading.Lock()
+_login_state_loaded = False
+_GLOBAL_LOGIN_FAIL_WINDOW = 600  # 10분
+_GLOBAL_LOGIN_FAIL_LIMIT = 20
+_GLOBAL_LOGIN_LOCK_SECONDS = 600  # 10분
+
+
+def _login_state_path() -> str:
+    return os.path.join(cfg_now().state_dir, "login_attempts.json")
+
+
+def _load_login_state() -> None:
+    """서버가 막 뜬 뒤 처음 로그인 시도가 들어올 때 한 번, 저장돼 있던 실패 기록을 불러온다."""
+    global _login_attempts, _global_login_fails, _global_login_locked_until, _login_state_loaded
+    if _login_state_loaded:
+        return
+    _login_state_loaded = True
+    try:
+        with open(_login_state_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            attempts = data.get("attempts")
+            if isinstance(attempts, dict):
+                _login_attempts = {k: v for k, v in attempts.items() if isinstance(v, dict)}
+            fails = data.get("global_fails")
+            if isinstance(fails, list):
+                _global_login_fails = [float(t) for t in fails if isinstance(t, (int, float))]
+            _global_login_locked_until = float(data.get("global_locked_until") or 0.0)
+    except Exception:
+        pass  # 파일이 없거나 깨졌으면 "실패 기록 없음"으로 시작한다 - 로그인 자체가 막히면 안 된다.
+
+
+def _save_login_state() -> None:
+    try:
+        path = _login_state_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({
+                "attempts": _login_attempts,
+                "global_fails": _global_login_fails,
+                "global_locked_until": _global_login_locked_until,
+            }, f)
+    except Exception:
+        pass  # 저장 실패는(디스크 문제 등) 로그인 기능 자체를 막을 이유가 아니다.
 
 
 def _login_client_key(request: Request) -> str:
-    """Tailscale serve 같은 프록시를 거치면 모든 요청이 127.0.0.1 로 보인다 - 그때는 프록시가 붙여
-    준 X-Forwarded-For 의 원래 주소로 센다(loopback 에서 온 요청일 때만 믿는다)."""
+    """무차별 대입 잠금을 셀 때 쓰는 키 = 보통은 접속 주소 그 자체.
+    DAYTRADER_TRUSTED_PROXY=1 일 때만(이 PC 안의 신뢰할 수 있는 프록시, 예: Tailscale serve, 를
+    직접 구성해 뒀다고 사용자가 명시한 경우) loopback 에서 온 요청의 X-Forwarded-For 원래 주소를
+    대신 쓴다 - 그런 설정이 없는 보통 배포에서 이 헤더는 요청을 보내는 쪽이 마음대로 넣을 수 있는
+    값이라 그대로 믿으면 헤더만 바꿔가며 개별 잠금을 피할 수 있다."""
     host = request.client.host if request.client else "unknown"
-    if host in _LOOPBACK:
+    if host in _LOOPBACK and os.environ.get("DAYTRADER_TRUSTED_PROXY", "").strip() == "1":
         fwd = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         if fwd:
             return fwd[:64]
@@ -618,6 +677,7 @@ def _login_client_key(request: Request) -> str:
 
 
 def _login_check_lock(key: str) -> None:
+    _load_login_state()
     entry = _login_attempts.get(key)
     if not entry:
         return
@@ -630,20 +690,47 @@ def _login_check_lock(key: str) -> None:
         )
 
 
+def _global_login_check_lock() -> None:
+    _load_login_state()
+    cutoff = time.time() - _GLOBAL_LOGIN_FAIL_WINDOW
+    _global_login_fails[:] = [t for t in _global_login_fails if t > cutoff]
+    remaining = _global_login_locked_until - time.time()
+    if remaining > 0:
+        wait_min = int(remaining // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"로그인 실패가 너무 많았습니다. {wait_min}분 후 다시 시도하세요.",
+        )
+
+
 def _login_record_fail(key: str) -> None:
+    _load_login_state()
     entry = _login_attempts.setdefault(key, {"fails": 0, "locked_until": 0.0})
     entry["fails"] += 1
     if entry["fails"] >= 3:
         lockout_minutes = entry["fails"] - 2
         entry["locked_until"] = time.time() + lockout_minutes * 60
+    global _global_login_locked_until
+    now = time.time()
+    _global_login_fails.append(now)
+    cutoff = now - _GLOBAL_LOGIN_FAIL_WINDOW
+    _global_login_fails[:] = [t for t in _global_login_fails if t > cutoff]
+    if len(_global_login_fails) >= _GLOBAL_LOGIN_FAIL_LIMIT:
+        _global_login_locked_until = now + _GLOBAL_LOGIN_LOCK_SECONDS
+    _save_login_state()
 
 
 def _login_record_success(key: str) -> None:
-    _login_attempts.pop(key, None)
+    _load_login_state()
+    if _login_attempts.pop(key, None) is not None:
+        _save_login_state()
 
 
 def _check_password_or_raise(request: Request, password: str) -> None:
+    """/api/login 과 /api/confirm 이 함께 쓴다 - 둘 다 "비밀번호를 아는가"를 확인하는 관문이라
+    잠금·전역 잠금을 공유해야 한다(그렇지 않으면 한쪽이 잠겨도 다른 쪽으로 계속 시도할 수 있다)."""
     key = _login_client_key(request)
+    _global_login_check_lock()
     _login_check_lock(key)
     if not _same(password.strip(), _auth_password()):
         _login_record_fail(key)
