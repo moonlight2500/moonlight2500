@@ -33,10 +33,11 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from daytrader import sizing
 from daytrader import session as session_mod
@@ -172,6 +173,86 @@ def _theme_stats(theme: str, arrived_syms: List[str], change_rate: Dict[str, flo
     return breadth, intensity, ranked
 
 
+# ── [7-2] daytrader/screener.py 근사(스크리너 게이팅) ───────────────────────
+# ★★★ 실제로 발견한 하네스 편향 - run_backtest() 는 원래 이 함수 없이, 로드해 둔
+# 유니버스(캐시에 있는 종목 전부, 예: 56종목)를 매 스캔마다 그대로 진입 후보로
+# 평가했다. 그런데 실전(daytrader.screener.Screener.build_report())은 하루 중
+# 그 시각까지의 등락률·거래대금으로 테마를 채점해 상위 top_themes(기본 2)개
+# 테마에서만, 테마당 candidates_per_theme(기본 2)종목만 후보로 올린다 - 등락률
+# 3~12%·거래대금 50억↑·가격대 1천~20만원·테마 동반상승 2종목↑ 조건도 다 걸려
+# 있다. 그 결과 실전은 하루에 많아야 후보 몇 종목(대개 2~8종목, 재스크리닝마다
+# 갱신)만 사고파는데, 게이팅이 없던 하네스는 유니버스 전체(그날 오른 것도 내린
+# 것도, 거래대금이 적은 것도 전부)를 대상으로 매매 신호를 평가했다 - "실전과
+# 다른 전략"을 채점하고 있었던 셈이다(거래 수는 부풀고, 품질 낮은 진입이 섞여
+# 승률·기대값이 실전보다 나쁘게 나온다). 여기서는 실시간 랭킹 API 없이 캐시된
+# 분봉만으로 같은 계산을 근사한다 - 등락률은 그날 시가 대비, 거래대금은
+# 그날 09:00부터 누적한 (전형가×거래량)의 합(session_stats 의 vwap_num 을
+# 그대로 재사용 - 이미 매 틱 누적하고 있어 추가 비용이 없다). 뉴스·유의종목·
+# ETF/우선주 필터는 분봉만으로는 알 수 없어 뺀다(README 에 근사임을 밝힌다).
+def _score_themes_approx(cfg, symbols, change_rate: Dict[str, float], trading_amount: Dict[str, float],
+                          symbol_themes: Dict[str, str]) -> List[tuple]:
+    """screener.Screener.score_themes() 의 근사. (점수, 테마명, 동반상승 종목(거래대금순),
+    동반상승 종목수, 상승률 중앙값) 리스트를 점수 내림차순으로 돌려준다."""
+    scr = cfg.screen
+    by_theme: Dict[str, List[str]] = {}
+    for sym in symbols:
+        theme = symbol_themes.get(sym, "")
+        if not theme:
+            continue
+        by_theme.setdefault(theme, []).append(sym)
+
+    views = []
+    for theme, members in by_theme.items():
+        up = [
+            m for m in members
+            if change_rate.get(m, NAN) == change_rate.get(m, NAN)  # NaN 아님
+            and change_rate[m] >= scr.min_change_rate
+        ]
+        if len(up) < scr.min_theme_members_up:
+            continue
+        rates = [change_rate[m] for m in up]
+        amount = sum(trading_amount.get(m, 0.0) for m in up)
+        intensity = statistics.median(rates)
+        liquidity = max(math.log10(max(amount, 1e8) / 1e8), 0.1)
+        score = len(up) * intensity * liquidity
+        ranked = sorted(up, key=lambda m: trading_amount.get(m, 0.0), reverse=True)
+        views.append((score, theme, ranked, len(up), intensity))
+
+    views.sort(key=lambda v: v[0], reverse=True)
+    return views
+
+
+def _pick_candidates_approx(
+    cfg, symbols, change_rate: Dict[str, float], trading_amount: Dict[str, float],
+    last_price: Dict[str, float], symbol_themes: Dict[str, str],
+) -> Tuple[List[str], Dict[str, tuple]]:
+    """screener.Screener.build_report() 의 후보 선정 근사. (후보 목록, {종목: (테마, 테마순위,
+    테마내순위, 테마내동반상승수, 테마강도)}) 를 돌려준다 - 뒤 값은 ThemeLeaderEntry 의 ctx
+    필드(theme_rank/theme_breadth/theme_intensity)를 실제 스크리너와 같은 정의로 채우는 데 쓴다."""
+    scr = cfg.screen
+    views = _score_themes_approx(cfg, symbols, change_rate, trading_amount, symbol_themes)
+    candidates: List[str] = []
+    meta: Dict[str, tuple] = {}
+    for theme_rank, (score, theme, ranked, breadth, intensity) in enumerate(views[: scr.top_themes], start=1):
+        count = 0
+        for rank_in_theme, sym in enumerate(ranked, start=1):
+            if count >= scr.candidates_per_theme:
+                break
+            price = last_price.get(sym, NAN)
+            cr = change_rate.get(sym, NAN)
+            amt = trading_amount.get(sym, 0.0)
+            if price != price or not (scr.min_price <= price <= scr.max_price):
+                continue
+            if cr != cr or cr > scr.max_change_rate:
+                continue  # min_change_rate 는 이미 up 선정에서 걸렀다(_score_themes_approx)
+            if amt < scr.min_trading_amount:
+                continue
+            candidates.append(sym)
+            meta[sym] = (theme, float(theme_rank), float(rank_in_theme), float(breadth), float(intensity))
+            count += 1
+    return candidates, meta
+
+
 def run_backtest(
     cfg,
     bars_by_symbol: Dict[str, List[Bar]],
@@ -185,6 +266,7 @@ def run_backtest(
     scale_out: Optional[bool] = None,
     min_warmup: int = 30,
     risk_gate: bool = True,
+    screener_gate: bool = True,
 ) -> BacktestResult:
     """여러 종목의 1분봉(날짜가 섞여 있어도 된다)을 시간순으로 재생하며 진짜 Playbook 으로
     사고 판다.
@@ -198,6 +280,12 @@ def run_backtest(
     scale_out: None 이면 cfg.sizing.scale_out 을 그대로 쓴다. True/False 로 강제하면 그
       값으로 ctx.scale_out 을 덮어써 FixedExit 의 전량 익절 on/off 를 실험할 수 있다
       (playbook.FixedExit.evaluate 참고 - scale_out=True 면 tp=NaN 이 되어 전량 익절이 꺼진다).
+    screener_gate: [7-2] True(기본) 면 daytrader/screener.py 의 테마·등락률·거래대금 게이팅을
+      캐시된 분봉으로 근사해(_pick_candidates_approx), 그 순간 스크리너가 실제로 뽑았을
+      후보 종목에만 진입 신호를 평가한다(cfg.entry.rescreen_minutes 마다 재선정 - 실전과
+      같은 주기). False 로 끄면 예전처럼 유니버스 전체를 매 틱 평가한다("게이팅 없는
+      유니버스"를 일부러 보고 싶을 때만 쓴다 - README 의 편향 설명 참고). 이미 보유 중인
+      포지션의 청산 판정은 게이팅과 무관하게 항상 계속한다(청산은 스크리너를 안 거친다).
     """
     r = cfg.risk
     if slippage_pct is None:
@@ -259,6 +347,11 @@ def run_backtest(
 
         timeline = sorted({b.ts for bars in day_bars.values() for b in bars})
         force_close_dt = None
+        # [7-2] 스크리너 게이팅 상태(하루 단위로 리셋) - candidates=None 이면 아직 그 날
+        # 첫 재선정 전(스캔 시작 전)이다.
+        candidates: Optional[set] = None
+        candidate_meta: Dict[str, tuple] = {}
+        next_rescreen_dt: Optional[datetime] = None
 
         for t in timeline:
             arrived = []
@@ -341,6 +434,22 @@ def run_backtest(
             if not can_scan:
                 continue
 
+            # [7-2] 스크리너 재선정 - cfg.entry.rescreen_minutes 마다(그 날 첫 스캔 틱 포함)
+            # 그 시각까지 누적된 등락률·거래대금으로 후보를 다시 뽑는다(screener.py 근사).
+            if screener_gate and (next_rescreen_dt is None or now_dt >= next_rescreen_dt):
+                last_price_all = {s: bl[-1].close for s, bl in hist.items() if bl}
+                change_rate_all = {
+                    s: (last_price_all[s] - day_open[s]) / day_open[s]
+                    for s in last_price_all if day_open.get(s)
+                }
+                trading_amount_all = {s: session_stats[s]["vwap_num"] for s in last_price_all}
+                cand_list, cand_meta = _pick_candidates_approx(
+                    cfg, list(hist.keys()), change_rate_all, trading_amount_all, last_price_all, symbol_themes,
+                )
+                candidates = set(cand_list)
+                candidate_meta = cand_meta
+                next_rescreen_dt = now_dt + timedelta(minutes=max(1, cfg.entry.rescreen_minutes))
+
             # ━━ 진입 ━━
             budget = r.daily_max_trades - trades_today - len(positions)
             if budget <= 0:
@@ -361,6 +470,8 @@ def run_backtest(
             for sym in arrived:
                 if sym in positions:
                     continue
+                if screener_gate and (candidates is None or sym not in candidates):
+                    continue  # [7-2] 그 순간 스크리너 후보가 아니면 애초에 신호를 안 본다(실전과 동일)
                 cd = cooldown.get(sym)
                 if cd is not None and cd > now_dt:
                     continue
@@ -368,14 +479,29 @@ def run_backtest(
                 if len(bars) < min_warmup:
                     continue
                 theme = symbol_themes.get(sym, "")
-                breadth, intensity, ranked = _theme_stats(theme, arrived, change_rate, symbol_themes)
-                rank = float(ranked.index(sym) + 1) if isinstance(ranked, list) and sym in ranked else NAN
-                theme_bars = None
-                if isinstance(ranked, list):
-                    for other in ranked:
-                        if other != sym:
-                            theme_bars = hist.get(other)
-                            break
+                meta = candidate_meta.get(sym) if screener_gate else None
+                if meta is not None:
+                    # [7-2] 실제 스크리너와 같은 정의(등락률 3%↑ 동반상승·거래대금순 랭킹·동반상승
+                    # 구간의 중앙값)로 채운다 - 예전 _theme_stats() 는 등락률 0%↑를 "동반상승"으로,
+                    # 평균(중앙값 아님)을 강도로, 등락률순(거래대금순 아님)을 대장주 순위로 써서
+                    # ThemeLeaderEntry 의 판정 문턱이 실제 스크리너보다 낮게 잡혀 있었다(감사 항목 1).
+                    _, rank, rank_in_theme, breadth, intensity = meta
+                    theme_bars = None
+                    for other_sym, other_meta in candidate_meta.items():
+                        if other_sym != sym and other_meta[0] == meta[0]:
+                            other_bars = hist.get(other_sym)
+                            if other_bars:
+                                theme_bars = other_bars
+                                break
+                else:
+                    breadth, intensity, ranked = _theme_stats(theme, arrived, change_rate, symbol_themes)
+                    rank = float(ranked.index(sym) + 1) if isinstance(ranked, list) and sym in ranked else NAN
+                    theme_bars = None
+                    if isinstance(ranked, list):
+                        for other in ranked:
+                            if other != sym:
+                                theme_bars = hist.get(other)
+                                break
                 st = session_stats[sym]
                 sess_vwap = st["vwap_num"] / st["vwap_den"] if st["vwap_den"] else NAN
                 sess_high = st["high"] if st["high"] != float("-inf") else NAN
