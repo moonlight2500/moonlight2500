@@ -83,16 +83,33 @@ def test_host_and_origin() -> None:
     check("추가하지 않은 이름은 거절", not S._host_allowed("trader.home.lan:8000"))
 
     check("GET 은 Origin 없이 통과", S._origin_ok(make_request()))
-    check("POST + 같은 출처 Origin 통과",
-          S._origin_ok(make_request({"origin": "http://127.0.0.1:8000"}, method="POST")))
-    check("POST + tailnet Origin 통과",
-          S._origin_ok(make_request({"origin": "https://ak2plus.tailfd3514.ts.net:8443"}, method="POST")))
+    check("POST + 같은 출처(호스트+포트 모두 일치) Origin 통과",
+          S._origin_ok(make_request({"origin": "http://127.0.0.1:8000", "host": "127.0.0.1:8000"}, method="POST")))
+    check("POST + tailnet Origin(호스트+포트 일치) 통과", S._origin_ok(make_request(
+        {"origin": "https://ak2plus.tailfd3514.ts.net:8443", "host": "ak2plus.tailfd3514.ts.net:8443"},
+        method="POST", scheme="https")))
     check("★ POST + 다른 사이트 Origin 은 거절",
-          not S._origin_ok(make_request({"origin": "https://evil.example.com"}, method="POST")))
+          not S._origin_ok(make_request({"origin": "https://evil.example.com", "host": "127.0.0.1:8000"},
+                                         method="POST")))
+    check("★★★ POST + 호스트는 같지만 포트가 다른 Origin 은 거절"
+          "(예전엔 포트를 무시해 http://localhost:9999 가 http://localhost:8000 인 척할 수 있었다)",
+          not S._origin_ok(make_request({"origin": "http://localhost:9999", "host": "localhost:8000"},
+                                         method="POST")))
+    check("POST + 스킴이 다른 Origin(https 라고 주장)은 거절",
+          not S._origin_ok(make_request({"origin": "https://127.0.0.1:8000", "host": "127.0.0.1:8000"},
+                                         method="POST")))  # 실제 요청은 http 로 옴
     check("POST + Origin 없고 Sec-Fetch-Site=cross-site 는 거절",
           not S._origin_ok(make_request({"sec-fetch-site": "cross-site"}, method="POST")))
     check("POST + Origin 없고 Sec-Fetch-Site=same-origin 은 통과",
           S._origin_ok(make_request({"sec-fetch-site": "same-origin"}, method="POST")))
+    check("★★★ POST 인데 Origin·Sec-Fetch-Site 가 둘 다 없으면 거절(예전엔 '판단 근거 없음'을 통과로 처리)",
+          not S._origin_ok(make_request({}, method="POST")))
+    os.environ["DAYTRADER_LOCAL_TOKEN"] = "tray-secret"
+    try:
+        check("★ 다만 트레이(로컬 제어 토큰)의 요청은 두 헤더가 없어도 통과(브라우저가 아니라서 애초에 없다)",
+              S._origin_ok(make_request({"x-local-control": "tray-secret"}, method="POST")))
+    finally:
+        os.environ.pop("DAYTRADER_LOCAL_TOKEN", None)
 
 
 def test_confirm_tokens() -> None:

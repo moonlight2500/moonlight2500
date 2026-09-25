@@ -428,11 +428,28 @@ def _set_device_cookie(resp: Response, request: Request, token: str) -> None:
 
 
 # ── ② Host · Origin 검증 ──
+def _split_netloc(netloc: str) -> tuple[str, str | None]:
+    """호스트[:포트] 를 (호스트, 포트-문자열-또는-None) 으로 나눈다. IPv6 대괄호([::1]:8000) 도 다룬다."""
+    n = (netloc or "").strip().lower()
+    if n.startswith("["):
+        if "]" in n:
+            end = n.index("]")
+            host = n[1:end]
+            rest = n[end + 1:]
+            return host, (rest[1:] if rest.startswith(":") else None)
+        return n, None
+    if n.count(":") == 1:
+        host, port = n.rsplit(":", 1)
+        return host, port
+    return n, None
+
+
 def _host_only(netloc: str) -> str:
-    h = (netloc or "").strip().lower()
-    if h.startswith("["):  # [::1]:8000
-        return h[1:h.index("]")] if "]" in h else h
-    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+    return _split_netloc(netloc)[0]
+
+
+def _default_port(scheme: str) -> str:
+    return "443" if scheme == "https" else "80"
 
 
 def _host_allowed(netloc: str) -> bool:
@@ -455,17 +472,43 @@ def _host_allowed(netloc: str) -> bool:
 
 
 def _origin_ok(request: Request) -> bool:
+    """CSRF 방어 - 상태를 바꾸는 요청(POST 등)이 "이 서버 자신"에서 나왔는지 확인한다.
+    ★★★ 실제로 겪을 수 있는 구멍 두 가지를 여기서 고친다.
+      ① 예전엔 Origin 의 호스트 이름만 보고(_host_allowed - "localhost·IP·Tailscale 이름인가")
+         허용했다. 그러면 Origin: http://localhost:9999(전혀 다른 포트, 즉 전혀 다른 웹앱)도
+         "localhost"라는 이유로 통과한다 - 브라우저의 동일 출처 정책은 포트까지 같아야 같은
+         출처로 보는데, 이 검증은 포트를 아예 무시했다. 그래서 이제 Origin 의 스킴·호스트·포트를
+         이 요청이 실제로 도착한 Host 헤더(+ 프록시 뒤라면 X-Forwarded-Proto)와 정확히 비교한다.
+      ② Origin 도 Sec-Fetch-Site 도 없는 요청을 "판단할 근거가 없으니 통과"로 취급했다 - 오래된
+         모든 브라우저가 아니라, 브라우저를 거치지 않고 임의로 만든 요청(예: 자동화 스크립트)도
+         이 상태와 똑같이 보인다. GET/HEAD 는 원래 안전한 메서드라 그대로 통과시키되, 상태를
+         바꾸는 요청에서 둘 다 없으면 이제 거절한다.
+    """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
+    if _is_local_control(request):
+        # ★ 트레이가 "매매 중단" 등을 보낼 때 쓰는 urllib 요청은 브라우저가 아니라서
+        # Origin·Sec-Fetch-Site 를 아예 안 보낸다 - 이미 loopback + 실행마다 새로 만드는
+        # 비밀 토큰(X-Local-Control)으로 지키고 있으니 이 검증까지 요구하지 않는다.
+        return True
     origin = request.headers.get("origin")
+    fetch_site = request.headers.get("sec-fetch-site")
     if origin:
         from urllib.parse import urlparse
         try:
-            return _host_allowed(urlparse(origin).netloc)
+            parsed = urlparse(origin)
         except ValueError:
             return False
-    fetch_site = request.headers.get("sec-fetch-site")
-    return not fetch_site or fetch_site in ("same-origin", "same-site", "none")
+        if parsed.scheme.lower() != ("https" if _is_https(request) else "http"):
+            return False
+        origin_host, origin_port = _split_netloc(parsed.netloc)
+        request_host, request_port = _split_netloc(request.headers.get("host", ""))
+        origin_port = origin_port or _default_port(parsed.scheme.lower())
+        request_port = request_port or _default_port("https" if _is_https(request) else "http")
+        return origin_host == request_host and origin_port == request_port
+    if fetch_site:
+        return fetch_site in ("same-origin", "same-site", "none")
+    return False  # ★ 상태를 바꾸는 요청인데 Origin·Sec-Fetch-Site 가 둘 다 없으면 거절.
 
 
 _CSP = (
