@@ -14,3 +14,7 @@ __pycache__/
 build/
 dist/
 *.spec
+
+# 리서치 백테스트 - 내려받은 시세 캐시·생성된 보고서는 올리지 않는다(코드만).
+research/cache/
+research/out/
