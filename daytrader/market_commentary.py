@@ -21,9 +21,11 @@ snapshot)도 같이 넣어 Groq 가 숫자를 근거로 판단하게 한다. "�
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -46,6 +48,27 @@ MARKET_LABEL = {"domestic": "국내", "overseas": "미국"}
 PRICE_SYMBOLS = ["SPY", "QQQ", "DIA", "NVDA", "AMD", "AVGO", "TSM", "MU", "ASML", "ARM", "SMCI", "INTC"]
 
 REVIEWS_FILE = "market_reviews.jsonl"
+
+# ★★★ "화면(미리보기)을 열 때마다 Groq 를 다시 부른다" 문제 - /api/review/market/preview 는
+# build_market_review() 를 그대로 호출하는데, 이게 compose() 까지 매번 실제로 Groq 를 부른다.
+# 사용자가 미리보기를 여러 번 눌러 보거나(같은 헤드라인·시세를 두고) 화면을 새로고침해도 같은
+# 입력이면 같은 결과가 나올 뿐인데 그때마다 하루 호출 한도(무료 플랜)를 소모했다. 입력(헤드라인
+# 제목들 + 가격 등락률)의 해시가 같으면 캐시된 결과를 그대로 돌려준다 - 새 헤드라인이 들어오거나
+# 가격이 갱신되면(해시가 달라지면) 자연히 다시 부른다.
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict = {}  # (market, digest) -> (text, cached_at)
+CACHE_TTL_SEC = 20 * 60  # 입력이 같아도 20분에 한 번은 새로 만든다(가격이 안 바뀌어도 시각은 지나가므로).
+
+
+def _review_digest(headlines: list, price_snapshot: list | None) -> str:
+    h = "|".join(f"{it.get('publisher', '')}:{it.get('title', '')}" for it in headlines)
+    p = "|".join(f"{row.get('symbol', '')}:{row.get('change_pct', 0):.2f}" for row in (price_snapshot or []))
+    return hashlib.sha1(f"{h}##{p}".encode("utf-8")).hexdigest()[:20]
+
+
+def reset_cache_for_tests() -> None:
+    with _CACHE_LOCK:
+        _CACHE.clear()
 
 
 def due(now_kst: datetime, cfg, sent: dict, *, kr_trading_day, us_trading_day=None, market: str = "domestic") -> tuple | None:
@@ -146,6 +169,13 @@ def compose(cfg, headlines: list, market: str = "domestic", price_snapshot: list
     if not llm.available(cfg):
         return None
 
+    digest = _review_digest(headlines, price_snapshot)
+    now = time.time()
+    with _CACHE_LOCK:
+        cached = _CACHE.get((market, digest))
+    if cached and now - cached[1] < CACHE_TTL_SEC:
+        return cached[0]
+
     label = MARKET_LABEL.get(market, "국내")
     parts = []
     if price_snapshot:
@@ -197,7 +227,10 @@ def compose(cfg, headlines: list, market: str = "domestic", price_snapshot: list
         lines.append("참고 출처: " + ", ".join(e(s) for s in sources))
     lines.append("")
     lines.append("<i>※ 실제 지수·주가와 뉴스 제목을 근거로 한 AI 요약입니다 - 투자 조언이 아니며, 원문 확인을 권합니다.</i>")
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    with _CACHE_LOCK:
+        _CACHE[(market, digest)] = (result, now)
+    return result
 
 
 def save_review(cfg, market: str, text: str, *, sent_at: float | None = None) -> None:
