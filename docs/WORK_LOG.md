@@ -1,6 +1,7 @@
-# 작업 기록 (2026-09-25, PR #1)
+# 작업 기록 (2026-09-25, v0.30.0)
 
-원본 `c3cc073` 에 대해 분석한 결과와 수정 내역을 정리한 문서다. 코드는 PR #1(`b26a238`)로 `main` 에 합쳐졌다.
+원본 `c3cc073` 에 대해 분석한 결과와 수정 내역을 정리한 문서다. 1차 수정은 PR #1(`b26a238`)로 `main` 에 합쳐졌고, 후속 수정(9~11번, 빌드 스크립트, 릴리즈)은 PR #2로 올렸다.
+사용자에게 보이는 변경 요약은 `CHANGELOG.md` 의 v0.30.0 에 있다.
 커밋 메시지 앞의 `[x-y]` 가 아래 항목 번호다. 특정 수정을 자세히 보려면 `git log --grep "\[1-2\]"` 로 커밋을 찾고 `git show <hash>` 로 본다.
 
 ## 1. 분석 요약
@@ -50,8 +51,15 @@
 | 5-1~3 | README·BUILD 문서 동기화, 의존성 고정(requirements-dev 분리), CI 워크플로 | 문서, requirements*, .github |
 | 8-1 | async 라우트 7개가 이벤트 루프를 막던 문제(def로 전환) | server.py, tests/test_async_routes.py |
 | 7-1~3 | 세션별 백테스트 연구 도구(research/), 스크리너 게이팅 근사 | research/* |
+| CI | 윈도우 콘솔 UTF-8, tzset 가드, httpx 개발 의존성 | .github, tests, requirements-dev.txt |
+| 9-1 | 조건부 오버나잇(수익 +2% 이상만 1일, 본전 손절, 금요일·휴장 전날 제외, 다음 날 OCO 재등록, 넘긴 포지션은 시간손절 예외) | engine.py, config.py, session.py(is_day_before_break), broker.py(Position.carry_date), playbook.py, forms.js |
+| 9-2 | 넘긴 포지션의 OCO 재등록 실패 시 텔레그램 알림 | engine.py |
+| 10-1~5 | 상태 배지 문구와 설명, 제목 중복 제거, 시장 탭 확대와 SVG 아이콘, "국내주식 사용", 해외·코인·스윙 설정 섹션 분리, 상단 상태 알약 재디자인 | web/* |
+| 11-1~6 | SQLite 전환: db.py(WAL, 스키마 버전), db_import.py(JSONL 1회 이관 → `.migrated`), ledger·journal·orders 등 저장소 교체, applog.py 의 app_log 핸들러(90일 보관), `/api/logs/history`, `run.py db-backup` | db.py, db_import.py, applog.py, ledger.py, journal.py, orders.py, server.py, run.py |
+| bat | build_exe.bat 한글 문구를 다시 쓰고 CP949 + CRLF 로 저장(.gitattributes) | build_exe.bat |
+| 릴리즈 | 버전 0.30.0, CHANGELOG 작성 | daytrader/__init__.py, CHANGELOG.md |
 
-테스트는 파일 31개가 모두 통과하고, CI는 윈도우와 우분투 모두 초록이다.
+테스트는 파일 32개와 `tests/ui_smoke.py`(65건)가 모두 통과한다. ui_smoke는 비밀번호를 무작위로 새로 만드는 새 설치 동작 때문에 `DAYTRADER_AUTH_PASSWORD=<6자리>` 를 주고 돌려야 한다.
 
 ## 3. 백테스트 결과 (야후 1분봉, 56종목, 2026-08-27~09-23, 21거래일)
 
@@ -70,7 +78,9 @@
 ## 4. 결정 사항
 
 - AI 뉴스 필터(news_guard)가 실패하면 매수를 통과시키는 현재 방식을 유지한다(사용자 결정).
-- 오버나잇 보유는 조건부 허용(C)으로 한다: 비용 차감 후 수익 +2% 이상인 종목만 1일 보유, 손절선을 본전으로 올림, 금요일·휴장 전날은 넘기지 않음. 후속 PR에서 구현한다(`[9-1]`).
+- 오버나잇 보유는 조건부 허용(C)으로 한다: 비용 차감 후 수익 +2% 이상인 종목만 1일 보유, 손절선을 본전으로 올림, 금요일·휴장 전날은 넘기지 않음. `[9-1]`·`[9-2]` 로 구현했다.
+- 기록 저장소는 SQLite(파이썬 표준 sqlite3)로 한다. 별도 서버가 필요 없고 exe에도 그대로 들어가기 때문이다.
+- 사이드바 상태 배지는 삭제하지 않고 상태 문구와 설명(호버·탭)을 붙인다.
 
 ## 5. 남은 할 일
 
@@ -92,3 +102,6 @@
 - 패널 폴링(setInterval)을 탭을 벗어나도 정리하지 않는다. 패널 onHide 생명주기가 필요하다.
 - Groq 5xx 쿨다운, AI 시황 출력 길이 강제는 제안만 하고 구현하지 않았다.
 - `daytrader/crypto_playbook.py` 는 테스트만 참조하는 사실상 죽은 코드다.
+- `Ledger.by_technique()` 는 아직 파이썬에서 집계해 5만 건 기준 약 1.1초 걸린다. 느려지면 SQL GROUP BY로 바꾼다.
+- 주문 원장(order_intents)은 쓸 때 synchronous=FULL이라 주문이 몰리면 조금 느릴 수 있다(안전을 위한 의도적 설계).
+- build_exe.bat 에서 이름이 사라진 한글 `.txt` 파일을 복사하던 줄은 README.md 복사로 바꿨다(원래 파일명은 복구할 수 없었다).
