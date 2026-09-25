@@ -475,8 +475,14 @@ def section_journal() -> None:
         r2 = j.evaluate(mk(True, []))
         check("★판정 바뀌면 기록", r1 and r2)
 
-        with open(j.path, "a", encoding="utf-8") as f:
-            f.write("이건 json이 아님\n")
+        # ★ 예전엔 j.path(JSONL 파일)에 깨진 줄을 직접 써서 확인했다 - 이제 daytrader.db 의
+        # journal 표에 손상된 data(JSON 아님) 행을 직접 넣어 같은 상황을 재현한다.
+        from daytrader import db
+        conn = db.get_connection(d)
+        conn.execute(
+            "INSERT INTO journal (at, date, mode, kind, symbol, data) VALUES (?, ?, ?, ?, ?, ?)",
+            ("2026-09-04T00:00:00+09:00", "2026-09-04", "sim", "watch", "", "이건 json이 아님"),
+        )
         rows_all = j.read()
         check("깨진 줄 건너뜀", isinstance(rows_all, list) and len(rows_all) >= 2)
 
