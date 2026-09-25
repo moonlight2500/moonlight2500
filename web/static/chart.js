@@ -146,9 +146,22 @@
     _colors() {
       const style = getComputedStyle(document.documentElement);
       return {
-        rise: (style.getPropertyValue("--rise") || "#d64541").trim() || "#d64541",
-        fall: (style.getPropertyValue("--fall") || "#3b6ee0").trim() || "#3b6ee0",
+        rise: (style.getPropertyValue("--rise") || "#e5484d").trim() || "#e5484d",
+        fall: (style.getPropertyValue("--fall") || "#3b82f6").trim() || "#3b82f6",
       };
+    }
+
+    // ★ 매수·매도 배지·세로선 색 - 손익 방향(rise/fall) 토큰을 그대로 쓴다.
+    // 예전엔 "#e0342b"/"#1f5fd6" 를 따로 박아 둬서 팔레트를 바꿔도 여기만
+    // 안 바뀌는 문제가 있었다. hex(#rrggbb) 를 rgba(alpha) 로 바꿔 쓰는
+    // 작은 헬퍼도 같이 둔다(배경 띠에 옅은 알파로 쓴다).
+    _hexToRgba(hex, alpha) {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+      if (!m) return "rgba(127,127,127," + alpha + ")";
+      const r = parseInt(m[1], 16);
+      const g = parseInt(m[2], 16);
+      const b = parseInt(m[3], 16);
+      return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
     }
 
     draw() {
@@ -313,8 +326,8 @@
       // 봉·거래량과 같은 색이라 묻히던 것을 흰 테두리와 색 배경 글자로 분명히 구분한다.
       const isUsd = this.unit === "usd";
       const shortPrice = (v) => (isUsd ? "$" + v.toFixed(2) : Math.abs(v) < 100 ? v.toFixed(2) : Math.round(v).toLocaleString("ko-KR"));
-      const buyColor = "#e0342b";
-      const sellColor = "#1f5fd6";
+      const buyColor = colors.rise;
+      const sellColor = colors.fall;
       const placed = [];  // 겹치는 라벨을 위아래로 밀어내기 위한 자리 기록
       for (const m of this.marks) {
         const gi = this._index(m.at);
@@ -328,7 +341,7 @@
         const color = isBuy ? buyColor : sellColor;
 
         // 배경 띠(그 봉이 어디인지)
-        ctx.fillStyle = isBuy ? "rgba(224,52,43,0.14)" : "rgba(31,95,214,0.14)";
+        ctx.fillStyle = this._hexToRgba(isBuy ? buyColor : sellColor, 0.14);
         ctx.fillRect(x - Math.max(slot, 6) / 2 - 1, padTop, Math.max(slot, 6) + 2, priceH);
 
         // 세로선
