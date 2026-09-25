@@ -929,6 +929,40 @@ def validate(cfg: Config) -> None:
             "비용을 이기지 못하는 설정입니다."
         )
 
+    # ★★★ 3-5 - 위 검증은 국내주식(cfg.risk.take_profit_pct)뿐이었다. 다른 시장도 익절폭이
+    # 왕복 비용보다 좁으면 손절·익절을 오가기만 해도 계좌가 갉아 먹히는 건 마찬가지인데
+    # 검증이 없었다. 각 시장이 실전 손익 계산에서 실제로 쓰는 비용 상수를 그대로 재사용한다
+    # (다른 값을 새로 지어내면 검증과 실제 채점이 서로 다른 기준을 쓰게 된다):
+    #   - 암호화폐: crypto.commission_pct(빗썸 수수료) - 거래세 없음(crypto_engine.py/
+    #     bithumb_api.py 어디에도 세금 모델이 없다).
+    #   - 해외주식: cfg.costs.commission_pct 를 국내와 그대로 공유해서 쓴다(overseas_broker.py
+    #     PaperOverseasBroker 가 실제로 이 값을 받아 왕복 수수료를 계산한다 - "국내 수수료율을
+    #     근사로 씀" 주석 참고). 거래세는 모델링하지 않는다(0).
+    #   - 스윙: swing_engine.py PaperSwingBroker 도 국내 cfg.costs(수수료+거래세)를 그대로 받는다
+    #     - 국내주식과 완전히 같은 비용식(be)이라 새로 계산할 것 없이 그대로 재사용한다.
+    be_crypto = breakeven_pct(cfg.crypto.commission_pct, 0.0)
+    if cfg.crypto.take_profit_pct <= be_crypto * 2:
+        raise ValueError(
+            f"crypto.take_profit_pct({cfg.crypto.take_profit_pct:.4%})이 암호화폐 왕복 비용"
+            f"({be_crypto:.4%}, crypto.commission_pct={cfg.crypto.commission_pct:.4%} 기준) 대비 "
+            "너무 좁습니다. 비용을 이기지 못하는 설정입니다."
+        )
+
+    be_overseas = breakeven_pct(cfg.costs.commission_pct, 0.0)
+    if cfg.overseas.take_profit_pct <= be_overseas * 2:
+        raise ValueError(
+            f"overseas.take_profit_pct({cfg.overseas.take_profit_pct:.4%})이 해외주식 왕복 비용"
+            f"({be_overseas:.4%}, 국내와 공유하는 costs.commission_pct 기준) 대비 너무 좁습니다. "
+            "비용을 이기지 못하는 설정입니다."
+        )
+
+    if cfg.swing.take_profit_pct <= be * 2:
+        raise ValueError(
+            f"swing.take_profit_pct({cfg.swing.take_profit_pct:.4%})이 스윙 왕복 비용"
+            f"({be:.4%}, 국내와 공유하는 costs.commission_pct/tax_pct 기준) 대비 너무 좁습니다. "
+            "비용을 이기지 못하는 설정입니다."
+        )
+
     if not _is_hhmm(cfg.screen.auto_time):
         raise ValueError("screen.auto_time 은 HH:MM 형식이어야 합니다.")
 
