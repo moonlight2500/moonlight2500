@@ -332,9 +332,14 @@ class Engine:
             )
             return False
 
-        if allocation and -self.state.realized_pnl / allocation >= r.daily_loss_limit_pct:
+        # ★★★ 실제로 겪은 버그 - 실현손익만 보고 일일 손실 한도를 판단했다.
+        # 아직 팔지 않은 보유 종목의 평가손실은 전혀 반영되지 않아, 이미
+        # 한도만큼(또는 그 이상) 물려 있는 상태에서도 신규 진입이 계속
+        # 허용됐다("지금 팔면 확정될 손익"까지 함께 봐야 한다).
+        daily_pnl = self.state.realized_pnl + self._unrealized_pnl()
+        if allocation and -daily_pnl / allocation >= r.daily_loss_limit_pct:
             self._halt(
-                f"일일 손실 한도({r.daily_loss_limit_pct*100:.0f}%)에 도달했습니다. "
+                f"일일 손실 한도({r.daily_loss_limit_pct*100:.0f}%)에 도달했습니다(평가손실 포함). "
                 "손실이 난 날 더 하려는 충동을 막는 것이 이 한도의 목적입니다."
             )
             return False

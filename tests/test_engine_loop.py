@@ -733,6 +733,57 @@ def test_rescreen_info_tells_next_time() -> None:
           bool(snap.get("rescreen", {}).get("next_at")), str(snap.get("rescreen")))
 
 
+# ━━ 일일 손실 한도 (평가손실 포함) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def test_daily_loss_limit_includes_unrealized() -> None:
+    """★★★ 실제로 겪은 버그 - 일일 손실 한도가 실현손익만 보고 판단해서,
+    이미 한도만큼(또는 그 이상) 물려 있는 보유 종목의 평가손실은 무시하고
+    신규 진입을 계속 허용했다. 실현+평가 손익 합계로 판단해야 한다.
+    """
+    print("\n== 일일 손실 한도(평가손실 포함) ==")
+    from daytrader.broker import Position
+    from daytrader.clock import SimClock
+    from daytrader.config import load_config
+    from daytrader.engine import Engine
+    from daytrader.simulator import SimClient
+    from daytrader.timeutil import now_kst
+
+    cfg = load_config(CONFIG_PATH)
+    cfg.mode = "sim"
+    cfg.risk.daily_loss_limit_pct = 0.02  # 배정금액의 2%
+    with tempfile.TemporaryDirectory() as d:
+        cfg.state_dir = d
+        clock = SimClock(start="10:00", speed=1, day="2026-09-04")
+        engine = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
+
+        # 실현손익은 0이라 예전 코드라면 통과했지만, 보유 종목의 평가손실만으로
+        # 이미 한도(2%)를 넘겼다.
+        loss_amount = engine.allocation * cfg.risk.daily_loss_limit_pct * 1.5
+        entry_price = 100000.0
+        qty = 10
+        peak = entry_price - (loss_amount / qty)
+        engine.state.realized_pnl = 0
+        engine.state.positions["000660"] = Position(
+            symbol="000660", name="SK하이닉스", theme="반도체", quantity=qty,
+            entry_price=entry_price, entry_time=now_kst(), peak_price=peak,
+            oco_id=None, entry_volume=0, verdict_id="v", why="", technique="breakout",
+        )
+
+        check("평가손실만으로 이미 한도를 넘김", -engine._unrealized_pnl() / engine.allocation >= cfg.risk.daily_loss_limit_pct)
+        check("★실현손익은 0이었지만 평가손실 포함해 매매를 멈춤", not engine._check_kill_switch())
+        check("halted 상태가 됨", engine.state.halted)
+
+        # ★ 이익 중인 보유 종목이면(평가이익) 한도에 걸리지 않아야 한다(기존 동작 유지).
+        engine2 = Engine(cfg, SimClient(cfg, clock=SimClock(start="10:00", speed=1, day="2026-09-04"), themes_path=THEMES_PATH))
+        engine2.state.realized_pnl = 0
+        engine2.state.positions["000660"] = Position(
+            symbol="000660", name="SK하이닉스", theme="반도체", quantity=qty,
+            entry_price=entry_price, entry_time=now_kst(), peak_price=entry_price + 1000,
+            oco_id=None, entry_volume=0, verdict_id="v", why="", technique="breakout",
+        )
+        check("평가이익 중이면 한도에 걸리지 않음", engine2._check_kill_switch())
+
+
 # ━━ 동시 보유 한도 (여러 후보가 한 번에 통과할 때) ━━━━━━━━━━━━━━━━━━━━━━━
 
 def test_max_positions_enforced_across_scored_candidates() -> None:
@@ -808,7 +859,7 @@ def main() -> None:
         test_stop_with_close_positions_actually_liquidates, test_force_close_survives_missing_price,
         test_runner_running_flag_after_stop, test_after_market_no_positions_waits_for_next_open,
         test_pnl_curve_includes_held_positions, test_symbol_curves_sum_to_total, test_rescreen_info_tells_next_time,
-        test_max_positions_enforced_across_scored_candidates,
+        test_max_positions_enforced_across_scored_candidates, test_daily_loss_limit_includes_unrealized,
     ]
     for t in tests:
         t()
