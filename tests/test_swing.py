@@ -570,7 +570,7 @@ def test_swing_fmt_ts_uses_kst_not_host_tz() -> None:
 
     old_tz = os.environ.get("TZ")
     os.environ["TZ"] = "UTC"
-    _time.tzset()
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
     orig_now_kst = se.now_kst
     try:
         fixed_now = se.datetime(2026, 1, 5, 2, 0, tzinfo=se.KST)
@@ -589,7 +589,7 @@ def test_swing_fmt_ts_uses_kst_not_host_tz() -> None:
             os.environ.pop("TZ", None)
         else:
             os.environ["TZ"] = old_tz
-        _time.tzset()
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
 
 
 def test_swing_engine_never_force_closes() -> None:

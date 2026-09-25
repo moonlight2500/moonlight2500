@@ -1115,7 +1115,7 @@ def test_daily_reset_uses_kst_not_host_tz() -> None:
 
     old_tz = os.environ.get("TZ")
     os.environ["TZ"] = "UTC"
-    _time.tzset()
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
     orig_now_kst_aware = oe._now_kst_aware
     try:
         # ★ "지금"을 KST 2026-01-05 새벽 2시로 고정한다(UTC 로는 2026-01-04 17:00).
@@ -1154,7 +1154,7 @@ def test_daily_reset_uses_kst_not_host_tz() -> None:
             os.environ.pop("TZ", None)
         else:
             os.environ["TZ"] = old_tz
-        _time.tzset()
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
 
 
 def day_str_of(dt) -> str:

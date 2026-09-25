@@ -10,6 +10,11 @@ on:
   push:
   pull_request:
 
+env:
+  # 윈도우 러너의 기본 콘솔 인코딩(cp1252)으로는 테스트가 출력하는 한글을 못 찍어 UnicodeEncodeError 가 난다.
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 jobs:
   test:
     strategy:

@@ -6,6 +6,7 @@
 httpx2==2.13.1     # starlette.testclient(TestClient)가 요구하는 HTTP 클라이언트 -
                    # tests/test_market_priority.py 등이 fastapi.testclient.TestClient 로
                    # /api/* 라우트를 직접 호출할 때 쓴다.
+httpx==0.28.1      # tests/test_async_routes.py 가 ASGI 앱을 httpx.AsyncClient 로 동시 호출한다.
 playwright==1.56.0 # tests/ui_smoke.py 의 브라우저(크로미움) 자동화 - 설치돼 있으면
                    # 16개 탭을 순회하며 콘솔 오류·가로 스크롤을 점검하고, 없으면
                    # (또는 브라우저가 없으면) 조용히 건너뛴다.

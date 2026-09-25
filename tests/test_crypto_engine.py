@@ -582,7 +582,7 @@ def test_fmt_ts_and_closed_today_use_kst_not_host_tz() -> None:
 
     old_tz = os.environ.get("TZ")
     os.environ["TZ"] = "UTC"
-    _time.tzset()
+    getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
     orig_now_kst_aware = ce._now_kst_aware
     try:
         fixed_now = ce.datetime(2026, 1, 5, 2, 0, tzinfo=ce.KST)
@@ -609,7 +609,7 @@ def test_fmt_ts_and_closed_today_use_kst_not_host_tz() -> None:
             os.environ.pop("TZ", None)
         else:
             os.environ["TZ"] = old_tz
-        _time.tzset()
+        getattr(_time, "tzset", lambda: None)()  # 윈도우에는 tzset 이 없다
 
 
 def main() -> None:
