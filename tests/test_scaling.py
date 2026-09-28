@@ -298,7 +298,7 @@ def test_domestic_scaling() -> None:
     cfg.capital.allocation = 10_000_000
     cfg.capital.max_positions = 3
     cfg.exit.use_conditional_oco = False
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
@@ -353,7 +353,7 @@ def test_domestic_pyramiding() -> None:
     cfg.capital.allocation = 10_000_000
     cfg.capital.max_positions = 3
     cfg.exit.use_conditional_oco = False
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))

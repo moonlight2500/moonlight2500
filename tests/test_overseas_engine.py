@@ -1178,7 +1178,7 @@ def test_overseas_live_buy_no_double_order_on_timeout() -> None:
     orders_mod.time.sleep = lambda s: None  # resolve_uncertain 재시도 대기를 없애 테스트를 빠르게.
     try:
         # ★ 조회하면 기존 주문을 찾는 경우 - 매수가 정상적으로 인계되어야 한다.
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             client = FakeUncertainTossClient(fail_create=True, findable=True)
             book = OverseasPositionBook()
             broker = LiveOverseasBroker(client, book=book, order_book=OrderBook(d))
@@ -1188,7 +1188,7 @@ def test_overseas_live_buy_no_double_order_on_timeout() -> None:
             check("조회로 기존 주문을 찾아 매수가 정상 인계됨", pos is not None and book.owns("AAPL"))
 
         # ★ 조회해도 끝내 못 찾는 경우 - 재전송하지 않고 halt 되어야 한다.
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             client2 = FakeUncertainTossClient(fail_create=True, findable=False)
             book2 = OverseasPositionBook()
             broker2 = LiveOverseasBroker(client2, book=book2, order_book=OrderBook(d))

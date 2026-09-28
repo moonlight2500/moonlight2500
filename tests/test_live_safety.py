@@ -196,7 +196,7 @@ def test_idempotency() -> None:
     orders_mod.time.sleep = lambda s: None  # 테스트를 빠르게 - resolve_uncertain 재시도 대기를 없앤다.
     try:
         # ★★ fail_create=True 로 타임아웃을 만들고 buy() 호출 → 이중 주문이 없어야 한다.
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             client = FakeToss()
             client.fail_create = True
             book = OrderBook(d)
@@ -207,7 +207,7 @@ def test_idempotency() -> None:
             check("조회로 기존 주문을 찾아 인계", fill.ok, fill.reason)
 
         # get_orders 가 끝내 못 찾는 경우 - 진짜로 접수 여부를 모르는 상태.
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             client2 = FakeToss()
             client2.fail_create = True
             client2.get_orders = lambda **kw: []  # 조회해도 절대 못 찾는다.
@@ -306,7 +306,7 @@ def test_reconcile() -> None:
     from daytrader.journal import Journal
     from daytrader.timeutil import now_kst
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg = _live_cfg()
         cfg.state_dir = d
         ledger = Ledger(d)
@@ -450,7 +450,7 @@ def test_preflight() -> None:
     from daytrader.safety import preflight
     from daytrader.ledger import Ledger
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg = _live_cfg()
         cfg.state_dir = d
         ledger = Ledger(d)
@@ -559,7 +559,7 @@ def test_degraded_mode() -> None:
     cfg.mode = "sim"  # 엔진 자체는 sim 으로 - 저하 모드 로직만 확인한다.
     cfg.live.degrade_after_failures = 3
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         client = SimClient(cfg, clock=clock, themes_path=THEMES_PATH)
@@ -1195,7 +1195,7 @@ def test_restart_with_carried_position() -> None:
     from daytrader.safety import preflight
     from daytrader.timeutil import now_kst
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg = _live_cfg()
         cfg.state_dir = d
         ledger = Ledger(d)

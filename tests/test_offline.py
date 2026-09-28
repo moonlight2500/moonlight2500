@@ -399,7 +399,7 @@ def section_ledger() -> None:
     print("\n== 거래 원장 ==")
     from daytrader.ledger import Ledger
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         lg = Ledger(d)
         lg.append_trade("paper", {
             "date": "2026-09-04", "symbol": "005930", "name": "삼성전자", "theme": "t",
@@ -427,7 +427,7 @@ def section_ledger() -> None:
         # FastAPI 의 JSONResponse(allow_nan=False)가 응답을 만들다
         # ValueError 로 죽는다(/api/performance, /api/playbook/stats 전체가
         # 500 으로 죽었다) - None 으로 나와야 안전하다.
-        with tempfile.TemporaryDirectory() as d2:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d2:
             lg2 = Ledger(d2)
             lg2.append_trade("paper", {
                 "date": "2026-09-04", "symbol": "005930", "name": "삼성전자", "theme": "t",
@@ -459,7 +459,7 @@ def section_journal() -> None:
     from daytrader.journal import Journal
     from daytrader.playbook import Verdict
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         j = Journal(d, mode="sim")
         j.watch("005930", "삼성전자", "관찰 중 (1.2배)")
         j.watch("005930", "삼성전자", "관찰 중 (1.5배)")  # 괄호 앞부분이 같아 억제되어야 한다.
@@ -498,7 +498,7 @@ def section_orders() -> None:
     check("★coid 매번 다름", len(coids) == 200)
     check("36자 이내", all(len(c) <= 36 for c in coids))
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         book = OrderBook(d)
         coid = new_coid("BUY", "005930")
         intent = OrderIntent(

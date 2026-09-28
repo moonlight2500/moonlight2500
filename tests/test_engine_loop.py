@@ -167,7 +167,7 @@ def test_reduced_size() -> None:
 
     cfg = load_config(CONFIG_PATH)
     cfg.mode = "sim"
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         client = SimClient(cfg, clock=clock, themes_path=THEMES_PATH)
@@ -193,7 +193,7 @@ def test_corrupt_state() -> None:
     print("\n== 상태 파일 ==")
     from daytrader.engine import DailyState
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         path = os.path.join(d, "daily_state.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write("이건 json이 아님{{{")
@@ -217,7 +217,7 @@ def test_resume_loads_saved_position_entry_time_as_datetime() -> None:
     print("\n== 상태 파일의 entry_time(문자열)이 datetime 으로 정상 복원됨 ==")
     from daytrader.engine import DailyState
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         path = os.path.join(d, "daily_state.json")
         saved = {
             "date": "2026-09-04", "mode": "paper", "realized_pnl": 0.0, "trades": 1,
@@ -755,7 +755,7 @@ def test_close_position_survives_oco_just_filled_race() -> None:
 
     cfg = load_config(CONFIG_PATH)
     cfg.mode = "sim"
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         eng = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
@@ -823,7 +823,7 @@ def test_daily_loss_limit_includes_unrealized() -> None:
     cfg = load_config(CONFIG_PATH)
     cfg.mode = "sim"
     cfg.risk.daily_loss_limit_pct = 0.02  # 배정금액의 2%
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         clock = SimClock(start="10:00", speed=1, day="2026-09-04")
         engine = Engine(cfg, SimClient(cfg, clock=clock, themes_path=THEMES_PATH))
@@ -874,7 +874,7 @@ def test_max_positions_enforced_across_scored_candidates() -> None:
 
     cfg = load_config(CONFIG_PATH)
     cfg.mode = "paper"
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         cfg.state_dir = d
         cfg.capital.max_positions = 3
         cfg.capital.allocation = 100_000_000  # 자금은 넉넉하게 둔다 - 한도만 시험한다.
