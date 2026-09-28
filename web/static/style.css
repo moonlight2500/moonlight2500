@@ -436,6 +436,19 @@ section h2 {
   font-size: var(--fs-1);
   font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ★ "대기"가 무슨 뜻인지 몰랐다 - title(호버)·클릭/Enter(모바일·키보드)로 설명을
+   보여주는 배지라 포커스가 보여야 한다(마우스 없이도 Tab 으로 찾아 읽을 수 있게). */
+.sidebar-mode-badge:hover,
+.sidebar-mode-badge:focus-visible {
+  background: var(--rule);
+  color: var(--ink);
+}
+.sidebar-mode-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .sidebar-mode-badge::before {
@@ -1682,14 +1695,29 @@ button.small {
   overflow: hidden;
 }
 
+/* ★★★ "탭메뉴의 글씨와 아이콘이 너무 작다" - 예전엔 12px 글자에 이모지 아이콘이라
+   가독성이 떨어졌다. 텍스트 15px(모바일 16px)·아이콘 19px·터치 높이 40px 이상으로
+   키운다(.seg-icon 은 UI.icon() SVG, currentColor 라 다크모드에서도 자연스럽다). */
 .seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: none;
   background: var(--card);
   color: var(--muted);
-  padding: var(--s2) var(--s3);
-  font-size: 12px;
+  padding: 9px var(--s4);
+  min-height: 40px;
+  font-size: 15px;
+  font-weight: 600;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
+}
+
+.seg button .seg-icon,
+.seg button .seg-icon svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
 }
 
 .seg button:hover:not(.active) {
@@ -2109,33 +2137,53 @@ button.badge.tech:hover {
 
 #conn-indicator[data-mode="reconnecting"] { animation: band-blink 1s ease-in-out infinite; }
 
-/* ━━ 상단 밴드 좌측 - 시장별 상태를 아이콘 하나로(글자 라벨 없음). 이모지(시장) + 우하단 점
-   (모드 색). title(데스크톱 호버)·클릭(모바일, app.js toast)로 자세한 문구를 본다. ━━━━━━━━━ */
+/* ━━ 상단 밴드 좌측 - 시장별 상태를 SVG 선 아이콘 하나로(글자 라벨 없음), 작은 사각
+   칩 안에 담고 우하단 점(모드 색)으로 상태를 더한다. title(데스크톱 호버)·클릭
+   (모바일, app.js toast)로 자세한 문구를 본다. ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 .band-icon {
   position: relative;
   display: inline-flex;
-  font-size: 17px;
-  line-height: 1;
-  margin-right: 8px;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  filter: grayscale(1);
   opacity: 0.55;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.band-icon .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.band-icon:hover {
+  background: var(--rule2);
+}
+
+.band-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .band-icon[data-state]:not([data-state="off"]) {
-  filter: none;
+  color: var(--ink);
+  background: var(--card);
   opacity: 1;
 }
 
 .band-icon::after {
   content: "";
   position: absolute;
-  right: -3px;
-  bottom: -3px;
+  right: 0px;
+  bottom: 0px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  border: 1.5px solid var(--rule2);
   background: var(--idle);
 }
 
@@ -2391,7 +2439,7 @@ table.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; }
      UI(.chips/.sub-nav 등)를 이번에 일관되게 쓰기 시작하면서 사용자가
      이미 그 패턴에 익숙해졌다고 보고 지침대로 되돌린다. */
   .seg { display: flex; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .seg button { flex: 0 0 auto; padding: var(--s2) var(--s3); min-height: 36px; white-space: nowrap; }
+  .seg button { flex: 0 0 auto; padding: 10px var(--s3); min-height: 42px; font-size: 16px; white-space: nowrap; }
   .seg button + button { border-left: 1px solid var(--rule); }
   .filter-row { flex-wrap: wrap; gap: var(--s2); }
 

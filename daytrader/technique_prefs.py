@@ -12,8 +12,9 @@ daytrader.playbook.Playbook 이 진입 기법을 채점할 때(_performance_mult
 ★★ 자동 실행(auto_backtest.py) - 종목이 새로 선정될 때마다 매번 다시 돌리면 API 호출이 낭비되므로,
 "오늘·이 종목 조합으로 이미 돌렸는지"를 candidate_sig 로 기억해 둔다(already_ran_today 참고).
 
-★★ 기록 - 수동이든 자동이든 실행할 때마다 state/technique_backtest_log.jsonl 에 한 줄 남겨서
-[실험실] 화면에서 "언제·어떤 계기로·무슨 결과가 나왔는지"를 나중에도 볼 수 있게 한다.
+★★ 기록 - 수동이든 자동이든 실행할 때마다 SQLite(daytrader.db 의 technique_backtest_log 표)에
+한 줄 남겨서 [실험실] 화면에서 "언제·어떤 계기로·무슨 결과가 나왔는지"를 나중에도 볼 수 있게
+한다(db.py 상단 "왜 SQLite 인가" 참고 - 예전엔 state/technique_backtest_log.jsonl 이었다).
 """
 
 from __future__ import annotations
@@ -22,20 +23,18 @@ import json
 import os
 import threading
 
+from daytrader import db
+
 _lock = threading.Lock()
 
 # ★ 선호 기법과 일치하면 이만큼 점수를 올린다 - _performance_multiplier 의 실적 배수(0.7~1.3)와
 # 비슷한 크기로 맞춘다. 하루치 표본으로 다른 기법을 완전히 못 쓰게 만들 정도로 세게 주지 않는다.
 PREFERENCE_BOOST = 1.15
-LOG_MAX_LINES = 200  # 기록 파일이 무한히 커지지 않게 자른다
+LOG_MAX_LINES = 200  # [실험실] 화면에는 최근 이만큼만 보여준다(표 자체는 더 오래 남는다)
 
 
 def _path(cfg) -> str:
     return os.path.join(cfg.state_dir, "technique_prefs.json")
-
-
-def _log_path(cfg) -> str:
-    return os.path.join(cfg.state_dir, "technique_backtest_log.jsonl")
 
 
 def _load(cfg) -> dict:
@@ -116,43 +115,22 @@ def save_from_backtest(cfg, market: str, backtest_result: dict, *, trigger: str 
 
 
 def _append_log(cfg, entry: dict) -> None:
-    p = _log_path(cfg)
-    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-    lines = []
-    if os.path.exists(p):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except Exception:
-            lines = []
-    lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
-    lines = lines[-LOG_MAX_LINES:]
-    tmp = f"{p}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    os.replace(tmp, p)
+    os.makedirs(cfg.state_dir, exist_ok=True)
+    db.insert_json_row(cfg.state_dir, "technique_backtest_log", {
+        "at": entry.get("at"), "market": entry.get("market") or "", "trigger_": entry.get("trigger"),
+    }, entry)
 
 
 def history(cfg, limit: int = 20) -> list:
     """최근 실행 기록(수동+자동)을 최신순으로. [실험실] 화면의 "최근 실행 기록"에 쓴다."""
-    p = _log_path(cfg)
-    if not os.path.exists(p):
-        return []
-    out = []
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    out.append(json.loads(line))
-                except Exception:
-                    continue
-    except Exception:
-        return []
-    out.reverse()
-    return out[:limit]
+    os.makedirs(cfg.state_dir, exist_ok=True)
+    conn = db.get_connection(cfg.state_dir)
+    limit = limit or LOG_MAX_LINES
+    cur = conn.execute(
+        "SELECT data FROM (SELECT id, data FROM technique_backtest_log ORDER BY id DESC LIMIT ?) ORDER BY id DESC",
+        (limit,),
+    )
+    return db.load_data_rows(cur.fetchall())
 
 
 def already_ran_today(cfg, market: str, sig: str) -> bool:

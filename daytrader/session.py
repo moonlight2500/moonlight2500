@@ -82,6 +82,29 @@ class _HolidayCache:
 _cache = _HolidayCache()
 
 
+def is_day_before_break(now: datetime.datetime, client) -> bool:
+    """오늘이 주말·공휴일 앞 마지막 거래일이면 True - "조건부 오버나이트"가 넘기지
+    않아야 할 날을 판정한다(exit.overnight_skip_before_holiday).
+    ★ 실제 토스 캘린더(/market-calendar/KR)는 "오늘" 응답 안에 nextBusinessDay 도
+    함께 준다(_HolidayCache.check() 의 버그 기록 참고) - 그걸 우선 쓰고, 달력상 내일
+    날짜와 다르면(=내일이 거래일이 아니면) 쉬는 날 앞이라고 본다. client 가 없거나
+    그 정보가 없으면(웹 폴백·시뮬레이션) 주말 여부만으로 판단한다 - 공휴일을 몰라도
+    넘기지 않는 쪽(더 보수적인 기본값)이 아니라, 이 함수의 기본 fallback 은 "모르면
+    거래일로 본다"는 이 파일의 다른 곳과 같은 원칙을 따른다(과도하게 자주 막지 않는다).
+    """
+    tomorrow = now.date() + datetime.timedelta(days=1)
+    if client is not None:
+        try:
+            cal = client.market_calendar_kr()
+            nxt = (cal or {}).get("nextBusinessDay") or {}
+            nxt_date = nxt.get("date")
+            if nxt_date:
+                return str(nxt_date)[:10] != tomorrow.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return tomorrow.weekday() >= 5
+
+
 def reset_holiday_cache() -> None:
     """날짜가 바뀌면 버린다. 어제 판정을 오늘 쓰면 안 된다."""
     global _cache

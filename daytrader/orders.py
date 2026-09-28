@@ -1,7 +1,13 @@
 """주문 전송 중 타임아웃이 나면 재시도할 수 없다. 첫 주문이 이미 접수됐을 수
 있어서 재전송하면 2배 수량을 산다. 그래서 모든 주문은 보내기 전에 의도를
-파일에 먼저 적고, 응답을 못 받으면 재전송 대신 조회로 확인한다.
+SQLite(daytrader.db)에 먼저 적고, 응답을 못 받으면 재전송 대신 조회로 확인한다.
 확인도 안 되면 매매를 멈춘다 - 모르는 상태로 계속 사고팔지 않는다.
+
+★★★ 왜 이 표만 synchronous=FULL 인가 - 이 표는 "이중 주문 방지"의 마지막 안전망이다.
+의도를 적은 뒤 그게 디스크에(전원이 나가도 살아남게) 내려갔다는 확신 없이 주문을 보내면,
+크래시 직후 재시작했을 때 "방금 주문을 보냈는지"를 영영 알 수 없어 재전송(이중 주문)하거나
+누락(포지션을 잃어버림)할 위험이 있다. 나머지 표(매매기록·일지 등)는 WAL+NORMAL 로 충분히
+빠르고 안전하지만, 이 표만은 db.durable_write() 로 fsync 까지 확인한다.
 """
 
 from __future__ import annotations
@@ -12,9 +18,17 @@ import time
 from dataclasses import asdict, dataclass
 from uuid import uuid4
 
+from daytrader import db
 from daytrader.timeutil import iso, now_kst
 
 PENDING_STATES = ("intent", "sent", "unknown")
+
+# ★ overseas_engine.py/crypto_engine.py 는 "국내주식 orders 와 절대 안 섞이게" 하려고
+# OrderBook(os.path.join(cfg.state_dir, "overseas_orders"/"crypto_orders")) 형태로 부른다.
+# 예전에는 그 하위 폴더 자체에 orders.jsonl 을 따로 뒀지만, db 는 state_dir 하나당 파일
+# 하나(daytrader.db)만 두므로 이 폴더 이름을 book 구분자로만 쓰고 실제 db 는 부모(state_dir)
+# 것을 그대로 연다 - 호출부(overseas_engine.py 등)는 한 글자도 안 고쳐도 된다.
+_BOOK_DIR_MAP = {"overseas_orders": "overseas", "crypto_orders": "crypto"}
 
 
 class OrderUncertainError(RuntimeError):
@@ -59,13 +73,22 @@ def is_ours(client_order_id: str) -> bool:
 
 
 class OrderBook:
-    """주문 의도와 그 결과를 append-only JSONL 로 남긴다.
+    """주문 의도와 그 결과를 order_intents 표(daytrader.db)에 append-only 로 남긴다.
     같은 coid 에 대한 최신 레코드가 그 주문의 현재 상태다.
     """
 
     def __init__(self, state_dir: str):
-        os.makedirs(state_dir, exist_ok=True)
-        self.path = os.path.join(state_dir, "orders.jsonl")
+        norm = os.path.normpath(state_dir)
+        base = os.path.basename(norm)
+        if base in _BOOK_DIR_MAP:
+            # ★ overseas_orders/crypto_orders 로 불리면 부모 폴더의 db 를 book 으로 구분해서 쓴다.
+            self.state_dir = os.path.dirname(norm) or "."
+            self.book = _BOOK_DIR_MAP[base]
+        else:
+            self.state_dir = state_dir
+            self.book = "domestic"
+        os.makedirs(self.state_dir, exist_ok=True)
+        db.get_connection(self.state_dir)  # 스키마 준비 + 기존 orders.jsonl(3곳) 1회성 가져오기
 
     def record(self, intent: OrderIntent) -> None:
         self._append(intent)
@@ -82,46 +105,53 @@ class OrderBook:
         return updated
 
     def latest(self, coid: str) -> OrderIntent | None:
-        found = None
-        for rec in self._read_all():
-            if rec.get("coid") == coid:
-                found = rec
-        return OrderIntent(**found) if found else None
+        conn = db.get_connection(self.state_dir)
+        row = conn.execute(
+            "SELECT data FROM order_intents WHERE book = ? AND coid = ? ORDER BY id DESC LIMIT 1",
+            (self.book, coid),
+        ).fetchone()
+        if row is None:
+            return None
+        return OrderIntent(**json.loads(row["data"]))
 
     def pending(self) -> list:
-        latest_by_coid: dict[str, dict] = {}
-        for rec in self._read_all():
-            latest_by_coid[rec["coid"]] = rec
-        return [OrderIntent(**r) for r in latest_by_coid.values() if r.get("status") in PENDING_STATES]
+        conn = db.get_connection(self.state_dir)
+        placeholders = ", ".join("?" for _ in PENDING_STATES)
+        sql = (
+            "SELECT t.data FROM order_intents t "
+            "JOIN (SELECT coid, MAX(id) AS max_id FROM order_intents WHERE book = ? GROUP BY coid) m "
+            "ON t.coid = m.coid AND t.id = m.max_id "
+            f"WHERE t.book = ? AND t.status IN ({placeholders})"
+        )
+        cur = conn.execute(sql, (self.book, self.book, *PENDING_STATES))
+        return [OrderIntent(**json.loads(r["data"])) for r in cur.fetchall()]
 
     def all(self, limit: int | None = None) -> list:
-        order: list[str] = []
-        latest_by_coid: dict[str, dict] = {}
-        for rec in self._read_all():
-            if rec["coid"] not in latest_by_coid:
-                order.append(rec["coid"])
-            latest_by_coid[rec["coid"]] = rec
-        items = [OrderIntent(**latest_by_coid[c]) for c in order]
+        """★ 생성 순서(먼저 만들어진 의도가 앞)로, 각 coid 의 최신 상태만 돌려준다.
+        limit 을 주면 "가장 최근에 만들어진 limit 개"만(끝에서부터) - SQL LIMIT 으로
+        전체를 다 읽지 않고 골라낸다."""
+        conn = db.get_connection(self.state_dir)
+        base_sql = (
+            "SELECT t.data FROM order_intents t "
+            "JOIN (SELECT coid, MIN(id) AS first_id, MAX(id) AS last_id "
+            "      FROM order_intents WHERE book = ? GROUP BY coid) m "
+            "ON t.coid = m.coid AND t.id = m.last_id "
+            "WHERE t.book = ? "
+        )
         if limit:
-            items = items[-limit:]
-        return items
+            cur = conn.execute(base_sql + "ORDER BY m.first_id DESC LIMIT ?", (self.book, self.book, limit))
+            rows = list(reversed(cur.fetchall()))
+        else:
+            cur = conn.execute(base_sql + "ORDER BY m.first_id ASC", (self.book, self.book))
+            rows = cur.fetchall()
+        return [OrderIntent(**json.loads(r["data"])) for r in rows]
 
     def _append(self, intent: OrderIntent) -> None:
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(intent), ensure_ascii=False) + "\n")
-
-    def _read_all(self):
-        if not os.path.exists(self.path):
-            return
-        with open(self.path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # JSONL 읽기는 깨진 줄을 건너뛴다.
+        row = asdict(intent)
+        # ★★★ durable=True - 주문을 보내기 전에 이 줄이 디스크에(전원이 나가도) 있어야 한다.
+        db.insert_json_row(self.state_dir, "order_intents", {
+            "book": self.book, "coid": intent.coid, "at": intent.at, "status": intent.status,
+        }, row, durable=True)
 
 
 def resolve_uncertain(client, intent: OrderIntent, book: OrderBook, tries: int = 5, gap: float = 2.0) -> str | None:

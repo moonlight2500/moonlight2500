@@ -15,7 +15,6 @@ reconcile() 은 도는 중 계좌와 상태를 맞춘다 - 계좌가 진실이�
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 
@@ -288,7 +287,7 @@ class Diff:
 
 def reconcile(client, state, cfg, journal, ledger, last_prices=None, *, adopt=None, broker=None) -> list:
     """도는 중 계좌와 상태를 맞춘다. 계좌가 진실이다.
-    불일치를 조용히 고치지 않는다 - 원장·일지·state/reconcile.jsonl 에 남긴다.
+    불일치를 조용히 고치지 않는다 - 원장·일지·daytrader.db 의 reconcile_log 표에 남긴다.
     ★ broker 를 넘기면 qty_mismatch 때 서버 OCO(조건부 손절/익절)도 새 수량으로
     다시 건다(engine.py 의 청산/분할매도가 쓰는 취소 후 재등록 패턴과 동일).
     broker 가 없으면(호출부가 안 넘기면) 예전처럼 내부 수량만 맞춘다.
@@ -437,14 +436,17 @@ def _find_recent_sell_price(client, symbol) -> float | None:
 
 
 def _append_reconcile_log(state_dir: str, diffs: list) -> None:
+    """계좌 대조 불일치를 SQLite(daytrader.db 의 reconcile_log 표)에 남긴다
+    (db.py 상단 "왜 SQLite 인가" 참고 - 예전엔 state/reconcile.jsonl 이었다)."""
     if not diffs:
         return
+    from daytrader import db
     os.makedirs(state_dir, exist_ok=True)
-    path = os.path.join(state_dir, "reconcile.jsonl")
-    with open(path, "a", encoding="utf-8") as f:
-        for d in diffs:
-            row = {"at": iso(now_kst()), **d.__dict__}
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    for d in diffs:
+        row = {"at": iso(now_kst()), **d.__dict__}
+        db.insert_json_row(state_dir, "reconcile_log", {
+            "at": row["at"], "symbol": row.get("symbol"), "kind": row.get("kind"),
+        }, row)
 
 
 def cleanup_orphans(broker, state, *, only_ours: bool = True) -> list:

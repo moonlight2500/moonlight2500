@@ -16,20 +16,22 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import threading
 import time
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-from daytrader import llm
+from daytrader import db, llm
 
 log = logging.getLogger(__name__)
 
 CACHE_TTL = 60 * 60  # 같은 종목·같은 헤드라인은 60분 동안 다시 묻지 않는다.
 LEVELS = ("block", "caution", "none")
-CALLS_FILE = "news_guard_ai_calls.json"  # ai_max_calls_per_day 카운터를 재시작 후에도 유지한다.
+# ai_max_calls_per_day 카운터를 재시작 후에도 유지한다 - SQLite(daytrader.db 의
+# news_guard_calls 표)에 담는다(db.py 상단 "왜 SQLite 인가" 참고). 예전 파일 이름을
+# 상수로 남겨 둔다 - 기존 news_guard_ai_calls.json 이 있으면 1회성으로 가져온다(db_import.py).
+CALLS_FILE = "news_guard_ai_calls.json"
 
 _SYSTEM = """You are a risk screener for a short-term stock/crypto trading program. You are given a symbol and its most recent news headlines. Decide whether buying it right now is unsafe because of a serious negative event.
 Rules:
@@ -97,48 +99,25 @@ class NewsGuard:
         # ★★★ "ai_max_calls_per_day 하루 한도가 서버 재시작으로 초기화된다" 문제 - 예전에는
         # 이 목록이 메모리에만 있어서, 서버를 여러 번 재시작하면(예: 배포·오류 복구) 같은
         # 날 하루 한도를 몇 번이고 다시 채울 수 있었다(무료 플랜 한도 초과로 이어짐). 이제
-        # state_dir 파일에 남겨 시작할 때 불러온다 - 24시간이 지난 항목은 자연히 걸러진다.
+        # SQLite(daytrader.db)에 남겨 시작할 때 불러온다 - 24시간이 지난 항목은 자연히 걸러진다.
         self._calls: list = self._load_calls()  # 최근 24시간 AI 호출 시각
         self.last_error = ""
         self.total_calls = 0
 
-    def _calls_path(self) -> str | None:
-        try:
-            return os.path.join(self.cfg.state_dir, CALLS_FILE)
-        except Exception:
-            return None
-
     def _load_calls(self) -> list:
-        path = self._calls_path()
-        if not path or not os.path.exists(path):
-            return []
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            conn = db.get_connection(self.cfg.state_dir)
+            cutoff = time.time() - 86400
+            cur = conn.execute("SELECT ts FROM news_guard_calls WHERE ts >= ? ORDER BY ts", (cutoff,))
+            return [r["ts"] for r in cur.fetchall()]
         except Exception:
             return []
-        if not isinstance(data, list):
-            return []
-        cutoff = time.time() - 86400
-        out = []
-        for t in data:
-            try:
-                t = float(t)
-            except (TypeError, ValueError):
-                continue
-            if t >= cutoff:
-                out.append(t)
-        return out
 
-    def _save_calls(self) -> None:
+    def _record_call(self, ts: float) -> None:
         """실패해도 판정 자체는 막지 않는다(디스크 오류가 매매를 멈추면 안 된다)."""
-        path = self._calls_path()
-        if not path:
-            return
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._calls, f)
+            conn = db.get_connection(self.cfg.state_dir)
+            conn.execute("INSERT INTO news_guard_calls (ts) VALUES (?)", (ts,))
         except Exception:
             pass
 
@@ -203,9 +182,10 @@ class NewsGuard:
         body = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles))
         user = f"Symbol: {symbol} ({name})\nHeadlines (untrusted):\n{body}"
         with self._lock:
-            self._calls.append(time.time())
+            ts = time.time()
+            self._calls.append(ts)
             self.total_calls += 1
-            self._save_calls()
+            self._record_call(ts)
         try:
             text = self._complete(_SYSTEM, user, 150)
         except Exception as exc:  # 어떤 오류도 통과시킨다

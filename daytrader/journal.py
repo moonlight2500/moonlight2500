@@ -1,25 +1,30 @@
 """로그는 흘러가지만 일지는 남는다. 모든 판단에 사람이 읽을 수 있는
 설명을 같이 적어서 나중에 '왜 저걸 샀지?'를 되짚을 수 있게 한다.
+SQLite(daytrader.db)에 담는다 - decisions.jsonl 이 1.8MB 까지 자라 매번 파일 전체를
+다시 읽고 파싱하던 것을, 인덱스가 걸린 표 조회로 바꿔 데이터가 쌓여도 빠르게 유지한다
+(db.py 상단의 "왜 SQLite 인가" 참고).
 """
 
 from __future__ import annotations
 
-import json
 import os
 
+from daytrader import db
 from daytrader.timeutil import iso, now_kst, with_josa
 
 KIND_LABELS = {
     "theme_scan": "테마 선정", "pick": "후보 선정", "reject": "후보 제외",
     "watch": "관찰 중", "evaluate": "판정", "buy": "매수", "sell": "매도",
     "halt": "매매 중단", "session": "세션", "reconcile": "계좌 대조",
+    "overnight": "오버나이트 판단",
 }
 
 
 class Journal:
     def __init__(self, state_dir, mode: str = "sim", clock=None):
+        self.state_dir = state_dir
         os.makedirs(state_dir, exist_ok=True)
-        self.path = os.path.join(state_dir, "decisions.jsonl")
+        db.get_connection(state_dir)  # 스키마 준비 + 기존 decisions.jsonl 1회성 가져오기
         self.mode = mode
         self.clock = clock
         self._last_watch: dict[str, str] = {}  # symbol -> 직전 reason(괄호 앞부분)
@@ -37,8 +42,10 @@ class Journal:
             "symbol": symbol, "name": name, "theme": theme,
             "explain": explain, "detail": detail or {},
         }
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        db.insert_json_row(self.state_dir, "journal", {
+            "at": row["at"], "date": row["date"], "mode": row["mode"],
+            "kind": row["kind"], "symbol": row["symbol"],
+        }, row)
 
     def log(self, kind, **detail) -> None:
         """스크리너 등 다른 모듈이 짧게 남길 때 쓰는 편의 메서드."""
@@ -77,48 +84,51 @@ class Journal:
         )
         return True
 
+    def _where(self, date=None, modes=None, kinds=None) -> tuple[str, list]:
+        clauses = []
+        params: list = []
+        if date is not None:
+            clauses.append("date = ?")
+            params.append(date)
+        if modes is not None:
+            modes = list(modes)
+            clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
+            params.extend(modes)
+        if kinds is not None:
+            kinds = list(kinds)
+            clauses.append(f"kind IN ({', '.join('?' for _ in kinds)})")
+            params.extend(kinds)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where_sql, params
+
     def read(self, date=None, modes=None, kinds=None, limit=None) -> list:
-        rows = []
-        if not os.path.exists(self.path):
-            return rows
-        with open(self.path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # ★ read 는 깨진 줄을 건너뛴다.
-                if date is not None and row.get("date") != date:
-                    continue
-                if modes is not None and row.get("mode") not in modes:
-                    continue
-                if kinds is not None and row.get("kind") not in kinds:
-                    continue
-                rows.append(row)
+        conn = db.get_connection(self.state_dir)
+        where_sql, params = self._where(date, modes, kinds)
         if limit:
-            rows = rows[-limit:]
-        return rows
+            # ★ "끝에서부터 limit 개"를 id 내림차순으로 빠르게 찾은 뒤(인덱스 활용),
+            # 화면에 보여줄 때는 다시 시간순으로 뒤집는다(keyset 방식 - 전체를 안 읽는다).
+            sql = f"SELECT data FROM (SELECT id, data FROM journal {where_sql} ORDER BY id DESC LIMIT ?) ORDER BY id ASC"  # noqa: S608
+            cur = conn.execute(sql, (*params, limit))
+        else:
+            sql = f"SELECT data FROM journal {where_sql} ORDER BY id"  # noqa: S608
+            cur = conn.execute(sql, tuple(params))
+        return db.load_data_rows(cur.fetchall())
 
     def dates(self, modes=None, kinds=None) -> list:
-        seen: list[str] = []
-        for row in self.read(modes=modes, kinds=kinds):
-            d = row.get("date")
-            if d and d not in seen:
-                seen.append(d)
-        return sorted(seen)
+        conn = db.get_connection(self.state_dir)
+        where_sql, params = self._where(None, modes, kinds)
+        cur = conn.execute(f"SELECT DISTINCT date FROM journal {where_sql} ORDER BY date", tuple(params))  # noqa: S608
+        return [r["date"] for r in cur.fetchall() if r["date"]]
 
     def reset(self, modes=None) -> None:
         """일지를 지운다. modes 를 주면 그 모드에 해당하는 줄만 지운다."""
+        conn = db.get_connection(self.state_dir)
         if modes is None:
-            if os.path.exists(self.path):
-                os.remove(self.path)
+            conn.execute("DELETE FROM journal")
         else:
-            keep = [r for r in self.read() if r.get("mode") not in modes]
-            with open(self.path, "w", encoding="utf-8") as f:
-                for row in keep:
-                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            modes = list(modes)
+            placeholders = ", ".join("?" for _ in modes)
+            conn.execute(f"DELETE FROM journal WHERE mode IN ({placeholders})", tuple(modes))  # noqa: S608
         self._last_watch.clear()
         self._last_blocked.clear()
 

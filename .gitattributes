@@ -1,0 +1,3 @@
+# build_exe.bat 은 한국어 윈도우 콘솔(ANSI, CP949)에서 한글이 깨지지 않도록 CP949 + CRLF 바이트 그대로 보관한다.
+# git 이 줄바꿈이나 인코딩을 바꾸지 않게 텍스트 변환을 끈다.
+build_exe.bat -text

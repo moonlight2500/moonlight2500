@@ -73,7 +73,9 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 
 def setup_logging() -> None:
-    """RotatingFileHandler(10MB × 5). 장중 폴링 로그가 무한히 쌓이면 디스크가 찬다."""
+    """RotatingFileHandler(10MB × 5, 장애 진단용 회전 텍스트 로그) + WARNING 이상을
+    SQLite(daytrader.db 의 app_log 표)에도 남기는 핸들러(daytrader/applog.py) - 화면의
+    최근 2000건(LogBuffer)보다 오래된 경고·오류를 나중에도 페이지 단위로 다시 찾을 수 있게 한다."""
     log_dir = app_path("logs")
     os.makedirs(log_dir, exist_ok=True)
     file_handler = RotatingFileHandler(
@@ -88,6 +90,14 @@ def setup_logging() -> None:
     root.setLevel(logging.INFO)
     root.addHandler(file_handler)
     root.addHandler(log_buffer)  # 화면(웹)에서도 최근 로그를 볼 수 있게 같이 붙인다.
+
+    try:
+        from daytrader import applog
+        db_handler = applog.attach(cfg_now().state_dir)
+        if db_handler is not None:
+            db_handler.addFilter(_RedactFilter())
+    except Exception:
+        logging.getLogger(__name__).warning("app_log DB 핸들러를 켜지 못했습니다 - 회전 텍스트 로그는 정상 동작합니다.")
 
 
 _secrets_migrated = False
@@ -1199,6 +1209,10 @@ async def _on_startup() -> None:
     if not _review_started:
         _review_started = True
         threading.Thread(target=_review_loop, daemon=True, name="daily-review").start()
+    global _maintenance_started
+    if not _maintenance_started:
+        _maintenance_started = True
+        threading.Thread(target=_db_maintenance_loop, daemon=True, name="db-maintenance").start()
 
 
 # ━━ 설정 읽기·쓰기 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1956,6 +1970,32 @@ def _send_period_review(period_label: str, since_date: str, until_date: str, sin
 
 
 _review_started = False
+_maintenance_started = False
+
+
+def _db_maintenance_loop() -> None:
+    """하루 한 번 보관기간(기본 90일)을 넘긴 app_log 를 지우고, 일요일마다 VACUUM/ANALYZE 한다.
+    ★ 실패해도(장중 잠김 등) 예외를 삼키고 다음 시각에 다시 시도한다 - 유지보수가 매매를 막으면 안 된다."""
+    from datetime import datetime as _dt
+    from daytrader import applog, db
+    last_prune_date = None
+    last_vacuum_date = None
+    while True:
+        try:
+            cfg = cfg_now()
+            today = time.strftime("%Y-%m-%d")
+            if today != last_prune_date:
+                removed = applog.prune(cfg.state_dir)
+                if removed:
+                    logging.getLogger(__name__).info("오래된 app_log %d건을 정리했습니다.", removed)
+                last_prune_date = today
+            # ★ 일요일에만 VACUUM - db 파일을 통째로 다시 쓰는 무거운 작업이라 자주 돌 필요는 없다.
+            if _dt.now().weekday() == 6 and today != last_vacuum_date:
+                db.vacuum_analyze(cfg.state_dir)
+                last_vacuum_date = today
+        except Exception:
+            logging.getLogger(__name__).exception("DB 유지보수 루프 오류")
+        time.sleep(3600)
 
 
 def _overseas_price_client():
@@ -3789,6 +3829,20 @@ async def get_logs(after: int = 0):
     return {"logs": log_buffer.since(after), "last_id": log_buffer.last_id}
 
 
+@app.get("/api/logs/history")
+@api_guard
+async def get_logs_history(before_id: int | None = None, level: str | None = None, limit: int = 200):
+    """★ 화면의 실시간 로그(LogBuffer, 최근 2000건)보다 오래된 경고·오류를 다시 찾을 때 쓴다.
+    app_log 표(WARNING 이상만, daytrader/applog.py)를 id 기준 keyset 으로 최신순 페이지네이션한다 -
+    /api/logs 는 그대로 두고(화면이 안 바뀌어도 되게) 별도 엔드포인트로 추가했다."""
+    from daytrader import applog
+    limit = max(1, min(limit, 1000))
+    cfg = cfg_now()
+    rows = applog.query(cfg.state_dir, level=level, before_id=before_id, limit=limit)
+    next_before_id = rows[-1]["id"] if len(rows) == limit else None
+    return {"logs": rows, "next_before_id": next_before_id}
+
+
 @app.get("/api/stream")
 async def stream_events(request: Request):
     """SSE 로 실시간 이벤트를 흘려보낸다.
@@ -4077,7 +4131,7 @@ async def get_technique_bonus():
     사용자가 필요할 때만 켜는 데스크톱 앱이라, "엔진이 꺼져 있어서 값을 모른다"고 하면 화면이
     거의 항상 비어 보이기 때문이다(crypto_status()/swing_status() 의 디스크 폴백과 같은 이유).
 
-    ★★★ 국내주식은 원래부터 시장 전체가 공유하는 ledger.jsonl(daytrader/ledger.py)에 기록되지만,
+    ★★★ 국내주식은 원래부터 시장 전체가 공유하는 daytrader.db 의 trades 표(daytrader/ledger.py)에 기록되지만,
     해외주식·암호화폐·스윙은 각자 자기 상태 파일(overseas_state.json 등)의 state.closed 리스트에
     "entry_technique" 필드로 기록한다(2026-09-24 조사에서 발견 - engine.py 만 Playbook.set_performance()
     를 호출해서, 이 세 시장은 학습 모드를 뭘로 두든 실적 가산점이 항상 중립(1.0)이었다). 여기서는

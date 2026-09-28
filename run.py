@@ -203,6 +203,18 @@ def cmd_ui(cfg, args) -> None:
     server.main()
 
 
+def cmd_db_backup(cfg, args) -> None:
+    """daytrader.db 의 안전한 복사본을 만든다(sqlite Online Backup API).
+    ★★★ 프로그램이 켜져 있는 동안 daytrader.db 파일을 그냥 복사(탐색기 복사·robocopy 등)하면
+    WAL 에 아직 합쳐지지 않은 최근 기록이 빠지거나 파일이 중간 상태로 찍힐 수 있다 - 그래서
+    이 명령을 따로 둔다(db.backup_to() 가 실행 중에도 안전하게 복사한다)."""
+    from daytrader import db
+    from daytrader.timeutil import now_kst
+    out = args.out or os.path.join(cfg.state_dir, f"daytrader-backup-{now_kst().strftime('%Y%m%d-%H%M%S')}.db")
+    db.backup_to(cfg.state_dir, out)
+    print(f"daytrader.db 를 안전하게 복사했습니다: {out}")
+
+
 # ━━ 진입점 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def build_parser() -> argparse.ArgumentParser:
@@ -236,6 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("report", help="성과 요약 출력")
     sub.add_parser("ui", help="웹 서버 실행")
 
+    p_dbbackup = sub.add_parser("db-backup", help="daytrader.db 를 실행 중에도 안전하게 복사")
+    p_dbbackup.add_argument("--out", default=None, help="복사본 경로 (기본: state\\daytrader-backup-<시각>.db)")
+
     return parser
 
 
@@ -248,10 +263,16 @@ def main() -> None:
     if args.command == "run" and getattr(args, "mode", None):
         cfg.mode = args.mode
 
+    # ★ setup_logging() 은 cfg 를 읽기 전에 불린다(state_dir 을 몰라서) - cfg 가 준비된
+    # 지금에서야 WARNING 이상을 SQLite(daytrader.db 의 app_log 표)에도 남기는 핸들러를 붙인다.
+    from daytrader import applog
+    applog.attach(cfg.state_dir)
+
     handlers = {
         "net": cmd_net, "check": cmd_check, "verify-themes": cmd_verify_themes,
         "discover": cmd_discover, "select": cmd_select, "run": cmd_run,
         "journal": cmd_journal, "rules": cmd_rules, "report": cmd_report, "ui": cmd_ui,
+        "db-backup": cmd_db_backup,
     }
     handlers[args.command](cfg, args)
 

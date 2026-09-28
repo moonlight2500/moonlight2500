@@ -87,7 +87,19 @@ exit:
   force_close_deadline_min: 9
   use_conditional_oco: true
   max_hold_minutes: 4320
+  # 장 마감(force_close_time)에 이익 중인 포지션만 다음 거래일로 넘길지. 꺼지면
+  # 아래 overnight_* 값과 무관하게 매일 전량 정리한다(예전 방식).
   allow_overnight: true
+  # 장마감 시점 평가손익이 비용(수수료·거래세)을 뺀 뒤에도 이 비율 이상이어야
+  # 넘긴다. 못 미치면 이익이든 손실이든 그날 안에 판다.
+  overnight_min_profit_pct: 0.02
+  # 한 번 넘긴 포지션을 다시 넘길 수 있는 최대 일수 - 지금은 1일만 지원한다.
+  overnight_max_days: 1
+  # 주말·공휴일 앞 마지막 거래일에는(다음 거래일이 내일이 아니면) 넘기지 않는다.
+  overnight_skip_before_holiday: true
+  # 넘기는 포지션은 손절선을 본전(평균 매수가 + 비용)으로 올리고 서버 OCO를
+  # 다시 건다 - 이익 중이던 포지션이 손실로 마감되는 것을 막는다.
+  overnight_breakeven_stop: true
 strategy:
   entry_order:
   - breakout

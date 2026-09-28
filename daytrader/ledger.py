@@ -1,15 +1,17 @@
 """엔진의 하루치 상태는 그날이 지나면 잊힌다. 성과를 일자별·월별로 보려면
-청산된 거래가 한곳에 계속 쌓여야 한다. 줄 단위라 중간에 죽어도 앞부분은 멀쩡하다.
+청산된 거래가 한곳에 계속 쌓여야 한다. SQLite(daytrader.db, daytrader/db.py)에 담아
+인덱스로 찾으므로 몇 년치가 쌓여도 조회가 느려지지 않는다(예전 ledger.jsonl 은 매번
+파일 전체를 다시 읽고 파싱했다 - 왜 SQLite 로 옮겼는지는 db.py 상단 설명 참고).
 모든 줄에 mode 가 들어간다 - 연습과 실거래를 절대 섞어서 보여주지 않기 위해서다.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import statistics
 from collections import defaultdict
 
+from daytrader import db
 from daytrader.timeutil import won
 
 VIRTUAL_MODES = ("sim", "replay", "web", "paper")
@@ -30,10 +32,9 @@ def modes_in(group: str) -> tuple:
 
 class Ledger:
     def __init__(self, state_dir: str):
+        self.state_dir = state_dir
         os.makedirs(state_dir, exist_ok=True)
-        self.trades_path = os.path.join(state_dir, "ledger.jsonl")
-        self.equity_path = os.path.join(state_dir, "equity.jsonl")
-        self._cache: dict[str, tuple] = {}  # path -> (mtime, rows)
+        db.get_connection(state_dir)  # 스키마 준비 + 기존 ledger.jsonl/equity.jsonl 1회성 가져오기
 
     def append_trade(self, mode: str, trade: dict) -> None:
         row = {
@@ -55,50 +56,36 @@ class Ledger:
             "verdict_id": trade.get("verdict_id"),
             "estimated": trade.get("estimated", False),
         }
-        with open(self.trades_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        db.insert_json_row(self.state_dir, "trades", {
+            "mode": row["mode"], "date": row["date"], "symbol": row["symbol"],
+            "technique": row["technique"], "exit_time": row["exit_time"], "pnl": row["pnl"],
+        }, row)
 
     def record_equity(self, mode: str, day: str, allocation: float, realized: float, trades: int, balance: float) -> None:
         row = {
             "mode": mode, "date": day, "allocation": allocation,
             "realized": realized, "trades": trades, "balance": balance,
         }
-        with open(self.equity_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        db.insert_json_row(self.state_dir, "equity", {"mode": mode, "date": day}, row)
 
-    def _read_cached(self, path: str) -> list:
-        """★ mtime 기준 캐시. 깨진 줄은 건너뛴다."""
-        if not os.path.exists(path):
-            return []
-        mtime = os.path.getmtime(path)
-        cached = self._cache.get(path)
-        if cached and cached[0] == mtime:
-            return cached[1]
-
-        rows = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        self._cache[path] = (mtime, rows)
-        return rows
+    def _select(self, table: str, modes=None) -> list:
+        conn = db.get_connection(self.state_dir)
+        if modes is None:
+            cur = conn.execute(f"SELECT data FROM {table} ORDER BY id")  # table 은 고정 상수만 온다
+        else:
+            modes = list(modes)
+            placeholders = ", ".join("?" for _ in modes)
+            cur = conn.execute(
+                f"SELECT data FROM {table} WHERE mode IN ({placeholders}) ORDER BY id",  # noqa: S608
+                tuple(modes),
+            )
+        return db.load_data_rows(cur.fetchall())
 
     def trades(self, modes=None) -> list:
-        rows = self._read_cached(self.trades_path)
-        if modes is not None:
-            rows = [r for r in rows if r.get("mode") in modes]
-        return rows
+        return self._select("trades", modes)
 
     def equity_rows(self, modes=None) -> list:
-        rows = self._read_cached(self.equity_path)
-        if modes is not None:
-            rows = [r for r in rows if r.get("mode") in modes]
-        return rows
+        return self._select("equity", modes)
 
     def daily(self, modes=None) -> list:
         rows = self.trades(modes)
@@ -321,13 +308,12 @@ class Ledger:
 
     def reset(self, modes=None) -> None:
         """원장을 지운다. modes 를 주면 그 모드에 해당하는 줄만 지운다."""
-        for path in (self.trades_path, self.equity_path):
-            if modes is None:
-                if os.path.exists(path):
-                    os.remove(path)
-                continue
-            keep = [r for r in self._read_cached(path) if r.get("mode") not in modes]
-            with open(path, "w", encoding="utf-8") as f:
-                for row in keep:
-                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        self._cache.clear()
+        conn = db.get_connection(self.state_dir)
+        if modes is None:
+            conn.execute("DELETE FROM trades")
+            conn.execute("DELETE FROM equity")
+            return
+        modes = list(modes)
+        placeholders = ", ".join("?" for _ in modes)
+        conn.execute(f"DELETE FROM trades WHERE mode IN ({placeholders})", tuple(modes))  # noqa: S608
+        conn.execute(f"DELETE FROM equity WHERE mode IN ({placeholders})", tuple(modes))  # noqa: S608

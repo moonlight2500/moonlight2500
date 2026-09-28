@@ -161,6 +161,40 @@ def section_config_validate() -> None:
 
     check("15:20에 끝나면 거부(단일가 시작과 겹침)", not try_load(_mutate_boundary_fail))
 
+    # ★★★ [9-1] 조건부 오버나이트 - 세부값 검증.
+    check(
+        "overnight_min_profit_pct 음수 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", -0.01)),
+    )
+    check(
+        "overnight_min_profit_pct 0.5 초과 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", 0.6)),
+    )
+    check(
+        "overnight_min_profit_pct 0은 허용(경계값 - 본전만 넘으면 연장)",
+        try_load(lambda r: r["exit"].__setitem__("overnight_min_profit_pct", 0)),
+    )
+    check(
+        "★overnight_max_days 는 지금은 1만 지원 - 2는 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_max_days", 2)),
+    )
+    check(
+        "overnight_max_days=1 은 통과",
+        try_load(lambda r: r["exit"].__setitem__("overnight_max_days", 1)),
+    )
+    check(
+        "allow_overnight 이 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("allow_overnight", "yes")),
+    )
+    check(
+        "overnight_skip_before_holiday 가 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_skip_before_holiday", "yes")),
+    )
+    check(
+        "overnight_breakeven_stop 이 bool 이 아니면 거부",
+        not try_load(lambda r: r["exit"].__setitem__("overnight_breakeven_stop", "yes")),
+    )
+
 
 # ━━ 지표 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -365,7 +399,7 @@ def section_ledger() -> None:
     print("\n== 거래 원장 ==")
     from daytrader.ledger import Ledger
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         lg = Ledger(d)
         lg.append_trade("paper", {
             "date": "2026-09-04", "symbol": "005930", "name": "삼성전자", "theme": "t",
@@ -393,7 +427,7 @@ def section_ledger() -> None:
         # FastAPI 의 JSONResponse(allow_nan=False)가 응답을 만들다
         # ValueError 로 죽는다(/api/performance, /api/playbook/stats 전체가
         # 500 으로 죽었다) - None 으로 나와야 안전하다.
-        with tempfile.TemporaryDirectory() as d2:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d2:
             lg2 = Ledger(d2)
             lg2.append_trade("paper", {
                 "date": "2026-09-04", "symbol": "005930", "name": "삼성전자", "theme": "t",
@@ -425,7 +459,7 @@ def section_journal() -> None:
     from daytrader.journal import Journal
     from daytrader.playbook import Verdict
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         j = Journal(d, mode="sim")
         j.watch("005930", "삼성전자", "관찰 중 (1.2배)")
         j.watch("005930", "삼성전자", "관찰 중 (1.5배)")  # 괄호 앞부분이 같아 억제되어야 한다.
@@ -441,8 +475,14 @@ def section_journal() -> None:
         r2 = j.evaluate(mk(True, []))
         check("★판정 바뀌면 기록", r1 and r2)
 
-        with open(j.path, "a", encoding="utf-8") as f:
-            f.write("이건 json이 아님\n")
+        # ★ 예전엔 j.path(JSONL 파일)에 깨진 줄을 직접 써서 확인했다 - 이제 daytrader.db 의
+        # journal 표에 손상된 data(JSON 아님) 행을 직접 넣어 같은 상황을 재현한다.
+        from daytrader import db
+        conn = db.get_connection(d)
+        conn.execute(
+            "INSERT INTO journal (at, date, mode, kind, symbol, data) VALUES (?, ?, ?, ?, ?, ?)",
+            ("2026-09-04T00:00:00+09:00", "2026-09-04", "sim", "watch", "", "이건 json이 아님"),
+        )
         rows_all = j.read()
         check("깨진 줄 건너뜀", isinstance(rows_all, list) and len(rows_all) >= 2)
 
@@ -458,7 +498,7 @@ def section_orders() -> None:
     check("★coid 매번 다름", len(coids) == 200)
     check("36자 이내", all(len(c) <= 36 for c in coids))
 
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         book = OrderBook(d)
         coid = new_coid("BUY", "005930")
         intent = OrderIntent(

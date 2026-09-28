@@ -54,6 +54,8 @@ def make_guard(cfg, titles=None, reply='{"level":"none","reason":""}'):
 
 def test_persist_across_restart() -> None:
     print("== 하루 호출 상한이 재시작 후에도 유지됨 ==")
+    from daytrader import db
+
     state_dir = tempfile.mkdtemp()
     cfg = make_cfg(state_dir, cap=2)
 
@@ -61,10 +63,14 @@ def test_persist_across_restart() -> None:
     g1.gate("A", "A사")
     g1.gate("B", "B사")
     check("첫 인스턴스에서 상한(2회)까지 호출", c1["post"] == 2)
-    check("호출 기록 파일이 남음", os.path.exists(os.path.join(state_dir, ng.CALLS_FILE)))
+    # ★ 예전엔 ng.CALLS_FILE(JSON 파일)의 존재를 확인했다 - 이제 SQLite(daytrader.db 의
+    # news_guard_calls 표)에 남으므로 그 표에 행이 쌓였는지로 확인한다.
+    conn = db.get_connection(state_dir)
+    row_count = conn.execute("SELECT COUNT(*) AS n FROM news_guard_calls").fetchone()["n"]
+    check("호출 기록이 db 에 남음", row_count == 2, str(row_count))
 
     # ★ "서버 재시작" 흉내 - 같은 state_dir 로 새 NewsGuard 를 만든다(메모리는 새로 시작하지만
-    # 디스크의 호출 기록은 그대로 남아 있어야 한다).
+    # db 의 호출 기록은 그대로 남아 있어야 한다).
     g2, c2 = make_guard(cfg)
     check("재시작 후 오늘 호출 수를 그대로 이어받음", g2.calls_today() == 2, str(g2.calls_today()))
     g2.gate("C", "C사")
@@ -73,15 +79,14 @@ def test_persist_across_restart() -> None:
 
 def test_old_calls_expire() -> None:
     print("== 24시간이 지난 호출 기록은 상한에서 빠짐 ==")
-    import json
     import time
+    from daytrader import db
 
     state_dir = tempfile.mkdtemp()
     cfg = make_cfg(state_dir, cap=2)
-    path = os.path.join(state_dir, ng.CALLS_FILE)
-    os.makedirs(state_dir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump([time.time() - 90000, time.time() - 90000], f)  # 25시간 전
+    conn = db.get_connection(state_dir)  # 스키마 준비
+    old_ts = time.time() - 90000  # 25시간 전
+    conn.executemany("INSERT INTO news_guard_calls (ts) VALUES (?)", [(old_ts,), (old_ts,)])
 
     g, c = make_guard(cfg)
     check("오래된 기록은 세지 않음", g.calls_today() == 0)
